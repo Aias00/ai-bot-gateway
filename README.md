@@ -1,0 +1,89 @@
+# Discord Codex Bot
+
+Personal Discord bridge for Codex app-server.
+
+## What It Does
+
+- Auto-discovers existing project paths (`cwd`) from Codex via `thread/list`.
+- Creates/manages one Discord text channel per discovered project.
+- Keeps all managed project channels under the `codex-projects` category.
+- Persists one Codex thread binding per repo channel:
+  - repo text channel -> one Codex app-server thread
+- Queues messages per repo channel (one active turn per channel).
+- Emits assistant output as paragraph messages (no single-message edit loop).
+- Emits separate status messages for non-agent items (tools/commands/etc.).
+- Handles approval requests via buttons (with command fallback).
+- Uploads attachment files for configured item types (default: `imageView` screenshots).
+
+## Requirements
+
+- Bun 1.2+
+- `codex` CLI installed on the host and authenticated
+- Discord bot token with:
+  - `MESSAGE CONTENT INTENT` enabled in the Discord developer portal
+  - channel read/send permissions in your server
+- Discord guild (server) id
+
+## Setup
+
+1. Install dependencies:
+
+   ```bash
+   bun install
+   ```
+
+2. Create env file:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+3. (Optional) add `config/channels.json` for overrides:
+
+   ```bash
+   cp config/channels.example.json config/channels.json
+   ```
+
+4. Start the bot:
+
+   ```bash
+   bun run start
+   ```
+
+On startup, the bot:
+
+- queries Codex app-server (`thread/list`) for known `cwd` values
+- ensures a `codex-projects` category exists
+- creates/moves managed project channels under that category
+- tags managed channels with topic `codex-cwd:<absolute-path>`
+
+## Commands
+
+- `!ask <prompt>` send a prompt in the current repo channel
+- `!status` show queue and binding state
+- `!new` clear stored Codex thread binding for the current channel
+- `!interrupt` request turn interruption for the current channel
+- `!where` show bot paths/config/thread binding for this channel
+- `!approve [id]` approve latest pending request in the channel (or specific id)
+- `!decline [id]` decline latest pending request in the channel (or specific id)
+- `!cancel [id]` cancel latest pending request in the channel (or specific id)
+- `!resync` non-destructive sync: discover/add/move/prune managed channels
+- `!rebuild` destructive rebuild: delete managed channels/bindings and recreate project channels from discovery
+- Plain message in a managed repo channel is treated as a prompt
+
+## Notes
+
+- This bot uses `codex app-server` over `stdio` and sends `initialize` + `initialized`.
+- `config/channels.json` is optional. Use it for overrides like `defaultModel`, `defaultEffort`, `allowedUserIds`, or fixed channel mappings.
+- `DISCORD_ALLOWED_USER_IDS` (comma-separated) overrides `channels.json` and is recommended for strict access control.
+- `CODEX_APPROVAL_POLICY` controls write/command approval prompts. Defaults to `never` in this bot (`untrusted`, `on-failure`, `on-request`, `never`).
+- `CODEX_SANDBOX_MODE` controls sandbox mode. Defaults to `workspace-write` in this bot (`read-only`, `workspace-write`, `danger-full-access`).
+- In `workspace-write`, the bot now auto-adds Git metadata roots (`--git-dir`, `--git-common-dir`) to writable roots so commits work in worktrees too.
+- `CODEX_EXTRA_WRITABLE_ROOTS` (colon-separated absolute paths) lets you add extra writable roots if your repo/tooling stores state elsewhere.
+- State is kept in `data/state.json` (`threadBindings` keyed by repo channel id).
+- Project channels are managed under `codex-projects` by default. Override with `DISCORD_PROJECTS_CATEGORY_NAME`.
+- Image attachments are forwarded into Codex turns as image inputs (downloaded locally by the bot).
+- `DISCORD_ENABLE_ATTACHMENTS` toggles outgoing attachment uploads (defaults to enabled).
+- `DISCORD_ATTACHMENT_MAX_BYTES` caps attachment size (default: 8MB).
+- `DISCORD_ATTACHMENT_ROOTS` (colon-separated absolute paths) allowlists attachment file locations.
+- `DISCORD_ATTACHMENT_ITEM_TYPES` (comma-separated) sets which item types upload files (default: `imageView`).

@@ -1,0 +1,15 @@
+{
+  "name": "discord-codex-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Discord bridge for Codex app-server",
+  "packageManager": "bun@1.2.5",
+  "scripts": {
+    "start": "bun run src/index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.20.0",
+    "dotenv": "^16.6.1"
+  }
+}
