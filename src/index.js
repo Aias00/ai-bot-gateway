@@ -14,51 +14,21 @@ import { CodexRpcClient } from "./codexRpcClient.js";
 import { maybeSendAttachmentsForItem as maybeSendAttachmentsForItemFromService } from "./attachments/service.js";
 import { createAttachmentInputBuilder } from "./attachments/inputBuilder.js";
 import { createRuntimeOps } from "./app/runtimeOps.js";
-import { createDiscordRuntime } from "./app/discordRuntime.js";
 import { createChannelMessaging } from "./app/channelMessaging.js";
+import { buildBridgeRuntimes } from "./app/buildRuntimes.js";
 import { createRuntimeAdapters } from "./app/runtimeAdapters.js";
 import { createShutdownHandler } from "./app/shutdown.js";
 import { startBridgeRuntime } from "./app/startup.js";
 import { wireBridgeListeners } from "./app/wireListeners.js";
-import { createServerRequestRuntime } from "./approvals/serverRequestRuntime.js";
-import { createBootstrapService } from "./channels/bootstrapService.js";
-import { resolveRepoContext, isGeneralChannel } from "./channels/context.js";
-import { createCommandRouter } from "./commands/router.js";
 import { loadConfig } from "./config/loadConfig.js";
 import { loadRuntimeEnv } from "./config/runtimeEnv.js";
-import {
-  buildApprovalActionRows,
-  buildResponseForServerRequest,
-  describeToolRequestUserInput,
-  parseApprovalButtonCustomId
-} from "./codex/approvalPayloads.js";
-import { normalizeCodexNotification } from "./codex/notificationMapper.js";
-import {
-  extractAgentMessageText,
-  extractThreadId,
-  isThreadNotFoundError,
-  isTransientReconnectErrorMessage
-} from "./codex/eventUtils.js";
+import { isThreadNotFoundError } from "./codex/eventUtils.js";
 import { createSandboxPolicyResolver } from "./codex/sandboxPolicy.js";
 import { createTurnRunner } from "./codex/turnRunner.js";
-import {
-  buildTurnRenderPlan,
-  sendChunkedToChannel as sendChunkedToChannelFromRenderer,
-  truncateForDiscordMessage
-} from "./render/messageRenderer.js";
+import { sendChunkedToChannel as sendChunkedToChannelFromRenderer } from "./render/messageRenderer.js";
 import { StateStore } from "./stateStore.js";
-import { TURN_PHASE, transitionTurnPhase } from "./turns/lifecycle.js";
-import { createNotificationRuntime } from "./turns/notificationRuntime.js";
 import { createTurnRecoveryStore } from "./turns/recoveryStore.js";
-import {
-  buildFileDiffSection,
-  extractWebSearchDetails,
-  recordFileChanges,
-  statusLabelForItemType,
-  summarizeItemForStatus,
-  truncateStatusText
-} from "./turns/turnFormatting.js";
-import { normalizeFinalSummaryText } from "./turns/textNormalization.js";
+import { statusLabelForItemType, truncateStatusText } from "./turns/turnFormatting.js";
 import {
   createDebugLog,
   formatInputTextForSetup,
@@ -242,122 +212,47 @@ runtimeOps = createRuntimeOps({
   truncateStatusText,
   shutdown: (...args) => shutdown?.(...args)
 });
-
-const bootstrapService = createBootstrapService({
+const { bootstrapChannelMappings, notificationRuntime: builtNotificationRuntime, serverRequestRuntime: builtServerRequestRuntime, discordRuntime: builtDiscordRuntime } = buildBridgeRuntimes({
   ChannelType,
+  MessageFlags,
   path,
+  fs,
+  execFileAsync,
   discord,
   codex,
   config,
   state,
+  activeTurns,
+  pendingApprovals,
+  approvalButtonPrefix,
   projectsCategoryName,
   managedChannelTopicPrefix,
   managedThreadTopicPrefix,
-  isDiscordMissingPermissionsError,
-  getChannelSetups: () => channelSetups,
-  setChannelSetups: (next) => {
-    channelSetups = next;
-  }
-});
-const { bootstrapChannelMappings, makeChannelName } = bootstrapService;
-const commandRouter = createCommandRouter({
-  ChannelType,
-  isGeneralChannel,
-  fs,
-  path,
-  execFileAsync,
   repoRootPath,
-  managedChannelTopicPrefix,
   codexBin,
   codexHomeEnv,
   statePath,
   configPath,
-  config,
-  state,
-  codex,
-  pendingApprovals,
-  makeChannelName,
-  collectImageAttachments: runtimeAdapters.collectImageAttachments,
-  buildTurnInputFromMessage: runtimeAdapters.buildTurnInputFromMessage,
-  enqueuePrompt: runtimeAdapters.enqueuePrompt,
-  getQueue: runtimeAdapters.getQueue,
-  findActiveTurnByRepoChannel: runtimeAdapters.findActiveTurnByRepoChannel,
-  requestSelfRestartFromDiscord: runtimeAdapters.requestSelfRestartFromDiscord,
-  findLatestPendingApprovalTokenForChannel: runtimeAdapters.findLatestPendingApprovalTokenForChannel,
-  applyApprovalDecision: runtimeAdapters.applyApprovalDecision,
-  safeReply,
-  getChannelSetups: () => channelSetups,
-  setChannelSetups: (nextSetups) => {
-    channelSetups = nextSetups;
-  }
-});
-const { handleCommand, handleInitRepoCommand } = commandRouter;
-notificationRuntime = createNotificationRuntime({
-  activeTurns,
   renderVerbosity,
-  TURN_PHASE,
-  transitionTurnPhase,
-  normalizeCodexNotification,
-  extractAgentMessageText,
-  maybeSendAttachmentsForItem: runtimeAdapters.maybeSendAttachmentsForItem,
-  recordFileChanges,
-  summarizeItemForStatus,
-  extractWebSearchDetails,
-  buildFileDiffSection,
-  buildTurnRenderPlan,
-  sendChunkedToChannel: runtimeAdapters.sendChunkedToChannel,
-  normalizeFinalSummaryText,
-  truncateStatusText,
-  isTransientReconnectErrorMessage,
-  safeSendToChannel,
-  truncateForDiscordMessage,
-  discordMaxMessageLength,
-  debugLog,
-  writeHeartbeatFile: runtimeAdapters.writeHeartbeatFile,
-  onTurnFinalized: async (tracker) => {
-    await turnRecoveryStore.removeTurn(tracker?.threadId);
-  }
-});
-serverRequestRuntime = createServerRequestRuntime({
-  codex,
-  discord,
-  state,
-  activeTurns,
-  pendingApprovals,
-  approvalButtonPrefix,
-  isGeneralChannel,
-  extractThreadId,
-  describeToolRequestUserInput,
-  buildApprovalActionRows,
-  buildResponseForServerRequest,
-  truncateStatusText,
-  truncateForDiscordMessage,
-  safeSendToChannel,
-  createApprovalToken: () => String(nextApprovalToken++).padStart(4, "0")
-});
-discordRuntime = createDiscordRuntime({
-  discord,
-  config,
-  resolveRepoContext,
   generalChannelId,
   generalChannelName,
   generalChannelCwd,
+  isDiscordMissingPermissionsError,
   getChannelSetups: () => channelSetups,
-  bootstrapChannelMappings,
-  shouldHandleAsSelfRestartRequest: runtimeAdapters.shouldHandleAsSelfRestartRequest,
-  requestSelfRestartFromDiscord: runtimeAdapters.requestSelfRestartFromDiscord,
-  collectImageAttachments: runtimeAdapters.collectImageAttachments,
-  buildTurnInputFromMessage: runtimeAdapters.buildTurnInputFromMessage,
-  enqueuePrompt: runtimeAdapters.enqueuePrompt,
-  handleCommand,
-  handleInitRepoCommand,
-  parseApprovalButtonCustomId,
-  approvalButtonPrefix,
-  pendingApprovals,
-  applyApprovalDecision: runtimeAdapters.applyApprovalDecision,
+  setChannelSetups: (nextSetups) => {
+    channelSetups = nextSetups;
+  },
+  runtimeAdapters,
   safeReply,
-  MessageFlags
+  safeSendToChannel,
+  debugLog,
+  turnRecoveryStore,
+  createApprovalToken: () => String(nextApprovalToken++).padStart(4, "0"),
+  sendChunkedToChannel: runtimeAdapters.sendChunkedToChannel
 });
+notificationRuntime = builtNotificationRuntime;
+serverRequestRuntime = builtServerRequestRuntime;
+discordRuntime = builtDiscordRuntime;
 
 shutdown = createShutdownHandler({
   codex,
