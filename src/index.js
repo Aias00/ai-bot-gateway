@@ -16,6 +16,7 @@ import { createAttachmentInputBuilder } from "./attachments/inputBuilder.js";
 import { createRuntimeOps } from "./app/runtimeOps.js";
 import { createDiscordRuntime } from "./app/discordRuntime.js";
 import { createChannelMessaging } from "./app/channelMessaging.js";
+import { createRuntimeAdapters } from "./app/runtimeAdapters.js";
 import { createShutdownHandler } from "./app/shutdown.js";
 import { startBridgeRuntime } from "./app/startup.js";
 import { wireBridgeListeners } from "./app/wireListeners.js";
@@ -157,25 +158,7 @@ let discordRuntime = null;
 let notificationRuntime = null;
 let serverRequestRuntime = null;
 let shutdown = null;
-const turnRunner = createTurnRunner({
-  queues,
-  activeTurns,
-  state,
-  codex,
-  config,
-  safeReply,
-  buildSandboxPolicyForTurn,
-  isThreadNotFoundError,
-  finalizeTurn,
-  onTurnReconnectPending,
-  onTurnCreated: async (tracker) => {
-    await turnRecoveryStore.upsertTurnFromTracker(tracker);
-  },
-  onTurnAborted: async (threadId) => {
-    await turnRecoveryStore.removeTurn(threadId);
-  },
-  onActiveTurnsChanged: () => runtimeOps?.writeHeartbeatFile()
-});
+let turnRunner = null;
 const attachmentInputBuilder = createAttachmentInputBuilder({
   fs,
   imageCacheDir,
@@ -185,14 +168,60 @@ const attachmentInputBuilder = createAttachmentInputBuilder({
   formatInputTextForSetup,
   logger: console
 });
+const runtimeAdapters = createRuntimeAdapters({
+  attachmentInputBuilder,
+  getTurnRunner: () => turnRunner,
+  getNotificationRuntime: () => notificationRuntime,
+  getServerRequestRuntime: () => serverRequestRuntime,
+  getDiscordRuntime: () => discordRuntime,
+  getRuntimeOps: () => runtimeOps,
+  getDiscord: () => discord,
+  maybeSendAttachmentsForItemFromService,
+  sendChunkedToChannelFromRenderer,
+  attachmentConfig: {
+    attachmentsEnabled,
+    attachmentItemTypes,
+    attachmentMaxBytes,
+    attachmentRoots,
+    imageCacheDir,
+    attachmentInferFromText,
+    attachmentIssueLimitPerTurn
+  },
+  channelMessagingConfig: {
+    statusLabelForItemType,
+    safeSendToChannel,
+    safeSendToChannelPayload,
+    truncateStatusText,
+    discordMaxMessageLength
+  }
+});
+turnRunner = createTurnRunner({
+  queues,
+  activeTurns,
+  state,
+  codex,
+  config,
+  safeReply,
+  buildSandboxPolicyForTurn,
+  isThreadNotFoundError,
+  finalizeTurn: runtimeAdapters.finalizeTurn,
+  onTurnReconnectPending: runtimeAdapters.onTurnReconnectPending,
+  onTurnCreated: async (tracker) => {
+    await turnRecoveryStore.upsertTurnFromTracker(tracker);
+  },
+  onTurnAborted: async (threadId) => {
+    await turnRecoveryStore.removeTurn(threadId);
+  },
+  onActiveTurnsChanged: () => runtimeOps?.writeHeartbeatFile()
+});
 
 wireBridgeListeners({
   codex,
   discord,
-  handleNotification,
-  handleServerRequest,
-  handleMessage,
-  handleInteraction
+  handleNotification: runtimeAdapters.handleNotification,
+  handleServerRequest: runtimeAdapters.handleServerRequest,
+  handleMessage: runtimeAdapters.handleMessage,
+  handleInteraction: runtimeAdapters.handleInteraction
 });
 
 runtimeOps = createRuntimeOps({
@@ -248,14 +277,14 @@ const commandRouter = createCommandRouter({
   codex,
   pendingApprovals,
   makeChannelName,
-  collectImageAttachments,
-  buildTurnInputFromMessage,
-  enqueuePrompt,
-  getQueue,
-  findActiveTurnByRepoChannel,
-  requestSelfRestartFromDiscord,
-  findLatestPendingApprovalTokenForChannel,
-  applyApprovalDecision,
+  collectImageAttachments: runtimeAdapters.collectImageAttachments,
+  buildTurnInputFromMessage: runtimeAdapters.buildTurnInputFromMessage,
+  enqueuePrompt: runtimeAdapters.enqueuePrompt,
+  getQueue: runtimeAdapters.getQueue,
+  findActiveTurnByRepoChannel: runtimeAdapters.findActiveTurnByRepoChannel,
+  requestSelfRestartFromDiscord: runtimeAdapters.requestSelfRestartFromDiscord,
+  findLatestPendingApprovalTokenForChannel: runtimeAdapters.findLatestPendingApprovalTokenForChannel,
+  applyApprovalDecision: runtimeAdapters.applyApprovalDecision,
   safeReply,
   getChannelSetups: () => channelSetups,
   setChannelSetups: (nextSetups) => {
@@ -270,13 +299,13 @@ notificationRuntime = createNotificationRuntime({
   transitionTurnPhase,
   normalizeCodexNotification,
   extractAgentMessageText,
-  maybeSendAttachmentsForItem,
+  maybeSendAttachmentsForItem: runtimeAdapters.maybeSendAttachmentsForItem,
   recordFileChanges,
   summarizeItemForStatus,
   extractWebSearchDetails,
   buildFileDiffSection,
   buildTurnRenderPlan,
-  sendChunkedToChannel,
+  sendChunkedToChannel: runtimeAdapters.sendChunkedToChannel,
   normalizeFinalSummaryText,
   truncateStatusText,
   isTransientReconnectErrorMessage,
@@ -284,7 +313,7 @@ notificationRuntime = createNotificationRuntime({
   truncateForDiscordMessage,
   discordMaxMessageLength,
   debugLog,
-  writeHeartbeatFile,
+  writeHeartbeatFile: runtimeAdapters.writeHeartbeatFile,
   onTurnFinalized: async (tracker) => {
     await turnRecoveryStore.removeTurn(tracker?.threadId);
   }
@@ -315,17 +344,17 @@ discordRuntime = createDiscordRuntime({
   generalChannelCwd,
   getChannelSetups: () => channelSetups,
   bootstrapChannelMappings,
-  shouldHandleAsSelfRestartRequest,
-  requestSelfRestartFromDiscord,
-  collectImageAttachments,
-  buildTurnInputFromMessage,
-  enqueuePrompt,
+  shouldHandleAsSelfRestartRequest: runtimeAdapters.shouldHandleAsSelfRestartRequest,
+  requestSelfRestartFromDiscord: runtimeAdapters.requestSelfRestartFromDiscord,
+  collectImageAttachments: runtimeAdapters.collectImageAttachments,
+  buildTurnInputFromMessage: runtimeAdapters.buildTurnInputFromMessage,
+  enqueuePrompt: runtimeAdapters.enqueuePrompt,
   handleCommand,
   handleInitRepoCommand,
   parseApprovalButtonCustomId,
   approvalButtonPrefix,
   pendingApprovals,
-  applyApprovalDecision,
+  applyApprovalDecision: runtimeAdapters.applyApprovalDecision,
   safeReply,
   MessageFlags
 });
@@ -342,12 +371,12 @@ await startBridgeRuntime({
   discord,
   discordToken,
   waitForDiscordReady,
-  maybeCompletePendingRestartNotice,
+  maybeCompletePendingRestartNotice: runtimeAdapters.maybeCompletePendingRestartNotice,
   turnRecoveryStore,
   safeSendToChannel,
   bootstrapChannelMappings,
   getMappedChannelCount: () => Object.keys(channelSetups).length,
-  startHeartbeatLoop
+  startHeartbeatLoop: runtimeAdapters.startHeartbeatLoop
 });
 
 process.on("SIGINT", () => {
@@ -356,101 +385,3 @@ process.on("SIGINT", () => {
 process.on("SIGTERM", () => {
   void shutdown(0);
 });
-
-function startHeartbeatLoop() {
-  runtimeOps?.startHeartbeatLoop();
-}
-
-async function writeHeartbeatFile() {
-  await runtimeOps?.writeHeartbeatFile();
-}
-
-async function requestSelfRestartFromDiscord(message, reason) {
-  await runtimeOps?.requestSelfRestartFromDiscord(message, reason);
-}
-
-async function maybeCompletePendingRestartNotice() {
-  await runtimeOps?.maybeCompletePendingRestartNotice(discord);
-}
-
-function shouldHandleAsSelfRestartRequest(content) {
-  return runtimeOps?.shouldHandleAsSelfRestartRequest(content) ?? false;
-}
-
-async function handleMessage(message) {
-  await discordRuntime?.handleMessage(message);
-}
-
-async function handleInteraction(interaction) {
-  await discordRuntime?.handleInteraction(interaction);
-}
-
-function collectImageAttachments(message) {
-  return attachmentInputBuilder.collectImageAttachments(message);
-}
-
-async function buildTurnInputFromMessage(message, text, imageAttachments, setup = null) {
-  return await attachmentInputBuilder.buildTurnInputFromMessage(message, text, imageAttachments, setup);
-}
-
-function enqueuePrompt(repoChannelId, job) {
-  turnRunner.enqueuePrompt(repoChannelId, job);
-}
-
-function getQueue(repoChannelId) {
-  return turnRunner.getQueue(repoChannelId);
-}
-
-async function handleNotification({ method, params }) {
-  await notificationRuntime?.handleNotification({ method, params });
-}
-
-function onTurnReconnectPending(threadId, context = {}) {
-  notificationRuntime?.onTurnReconnectPending(threadId, context);
-}
-
-async function handleServerRequest({ id, method, params }) {
-  await serverRequestRuntime?.handleServerRequest({ id, method, params });
-}
-
-function findLatestPendingApprovalTokenForChannel(repoChannelId) {
-  return serverRequestRuntime?.findLatestPendingApprovalTokenForChannel(repoChannelId) ?? null;
-}
-
-async function applyApprovalDecision(token, decision, actorMention) {
-  return (
-    (await serverRequestRuntime?.applyApprovalDecision(token, decision, actorMention)) ?? {
-      ok: false,
-      error: "Approval runtime unavailable"
-    }
-  );
-}
-
-function findActiveTurnByRepoChannel(repoChannelId) {
-  return turnRunner.findActiveTurnByRepoChannel(repoChannelId);
-}
-
-async function finalizeTurn(threadId, error) {
-  await notificationRuntime?.finalizeTurn(threadId, error);
-}
-
-async function maybeSendAttachmentsForItem(tracker, item) {
-  const maxAttachmentIssueMessages = tracker?.allowFileWrites === false ? 0 : attachmentIssueLimitPerTurn;
-  await maybeSendAttachmentsForItemFromService(tracker, item, {
-    attachmentsEnabled,
-    attachmentItemTypes,
-    attachmentMaxBytes,
-    attachmentRoots,
-    imageCacheDir,
-    attachmentInferFromText,
-    statusLabelForItemType,
-    safeSendToChannel,
-    safeSendToChannelPayload,
-    truncateStatusText,
-    maxAttachmentIssueMessages
-  });
-}
-
-async function sendChunkedToChannel(channel, text) {
-  await sendChunkedToChannelFromRenderer(channel, text, safeSendToChannel, discordMaxMessageLength);
-}
