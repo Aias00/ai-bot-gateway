@@ -10,6 +10,7 @@ data/state.json
 data/restart-request.json
 data/bridge-heartbeat.json
 data/restart-ack.json
+data/inflight-turns.json
 config/channels.json
 *.log
 com.codex.discord.bridge.plist
