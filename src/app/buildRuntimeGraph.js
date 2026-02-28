@@ -30,8 +30,7 @@ export async function buildRuntimeGraph(deps) {
     attachmentItemTypes,
     attachmentIssueLimitPerTurn,
     inFlightRecoveryPath,
-    extraWritableRoots,
-    uxFlowCutover
+    extraWritableRoots
   } = runtimeEnv;
 
   const discord = new Client({
@@ -125,7 +124,6 @@ export async function buildRuntimeGraph(deps) {
     onTurnAborted: async (threadId) => {
       await turnRecoveryStore.removeTurn(threadId);
     },
-    uxFlowCutover,
     onActiveTurnsChanged: () => refs.runtimeOps?.writeHeartbeatFile()
   });
 

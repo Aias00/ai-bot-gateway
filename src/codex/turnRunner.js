@@ -15,8 +15,7 @@ export function createTurnRunner(deps) {
     onActiveTurnsChanged,
     onTurnReconnectPending,
     onTurnCreated,
-    onTurnAborted,
-    uxFlowCutover = true
+    onTurnAborted
   } = deps;
 
   function enqueuePrompt(repoChannelId, job) {
@@ -69,8 +68,7 @@ export function createTurnRunner(deps) {
         const runTurn = async (targetThreadId) => {
           startedThreadId = targetThreadId;
           const turn = createActiveTurn(targetThreadId, repoChannelId, statusMessage, job.setup.cwd, {
-            allowFileWrites: job.setup.allowFileWrites !== false,
-            uxFlowCutover
+            allowFileWrites: job.setup.allowFileWrites !== false
           });
           turnPromise = turn.promise;
 
@@ -276,7 +274,6 @@ export function createTurnRunner(deps) {
       cwd: typeof cwd === "string" && cwd ? cwd : null,
       lifecyclePhase: TURN_PHASE.RUNNING,
       allowFileWrites: options.allowFileWrites !== false,
-      uxFlowCutover: options.uxFlowCutover === true,
       sentAttachmentKeys: new Set(),
       seenAttachmentIssueKeys: new Set(),
       attachmentIssueCount: 0,
@@ -293,14 +290,10 @@ export function createTurnRunner(deps) {
       fullText: "",
       seenDelta: false,
       currentStatusLine: "⏳ Thinking...",
-      lastStatusUpdateLine: "",
-      pendingCompletionReactions: new Map(),
       lastRenderedContent: "",
       completed: false,
       failed: false,
       failureMessage: "",
-      itemStatusMessages: new Map(),
-      itemStatusQueues: new Map(),
       fileChangeSummary: new Map(),
       statusSyntheticCounter: 0,
       flushTimer: null,

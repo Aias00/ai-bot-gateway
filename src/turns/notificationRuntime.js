@@ -3,18 +3,13 @@ import { collectLikelyLocalPathsFromText, extractAttachmentCandidates } from "..
 export function createNotificationRuntime(deps) {
   const {
     activeTurns,
-    renderVerbosity,
     TURN_PHASE,
     transitionTurnPhase,
     normalizeCodexNotification,
     extractAgentMessageText,
-    maybeSendAttachmentsForItem,
     maybeSendInferredAttachmentsFromText,
     recordFileChanges,
-    summarizeItemForStatus,
-    extractWebSearchDetails,
     buildFileDiffSection,
-    buildTurnRenderPlan,
     sanitizeSummaryForDiscord = (text) => String(text ?? "").trim(),
     sendChunkedToChannel,
     normalizeFinalSummaryText,
@@ -45,9 +40,7 @@ export function createNotificationRuntime(deps) {
         return;
       }
       noteTurnActivity(tracker);
-      if (isUxFlowCutoverEnabled(tracker)) {
-        await ensureThinkingStage(tracker);
-      }
+      await ensureThinkingStage(tracker);
       transitionTurnPhase(tracker, TURN_PHASE.RUNNING);
       debugLog("item-delta", "agent delta", {
         threadId,
@@ -72,13 +65,11 @@ export function createNotificationRuntime(deps) {
       const item = normalized.item;
       const state = normalized.state;
       updateLifecycleItemState(tracker, item, state);
-      if (isUxFlowCutoverEnabled(tracker) && isToolCallItemType(item?.type)) {
+      if (isToolCallItemType(item?.type)) {
         noteToolCallObserved(tracker);
         await ensureWorkingStage(tracker);
       }
-      if (isUxFlowCutoverEnabled(tracker)) {
-        await ensureThinkingStage(tracker);
-      }
+      await ensureThinkingStage(tracker);
       if (state === "started") {
         transitionTurnPhase(tracker, TURN_PHASE.RUNNING);
       }
@@ -99,33 +90,9 @@ export function createNotificationRuntime(deps) {
         recordFileChanges(tracker, item);
       }
 
-      if (!isUxFlowCutoverEnabled(tracker) && shouldAnnounceStatusItem(item?.type, renderVerbosity)) {
-        const statusLine = recordItemStatusLine(item, state);
-        if (statusLine) {
-          const statusMessage = await sendStatusUpdateLine(tracker, statusLine);
-          if (statusMessage) {
-            const key = makeItemStatusKey(item);
-            if (key) {
-              tracker.itemStatusMessages.set(key, statusMessage.id);
-              const pendingEmoji = tracker.pendingCompletionReactions?.get(key);
-              if (pendingEmoji) {
-                tracker.pendingCompletionReactions.delete(key);
-                await reactToStatusMessage(tracker, statusMessage.id, key, pendingEmoji);
-              }
-            }
-          }
-        } else if (state === "completed" && shouldReactOnCompletion(item?.type)) {
-          await reactToStatusCompletion(tracker, item);
-        }
-      }
-
       if (state === "completed") {
-        if (isUxFlowCutoverEnabled(tracker)) {
-          if (item?.type === "imageView") {
-            queueAttachmentCandidatesForLater(tracker, item);
-          }
-        } else {
-          await maybeSendAttachmentsForItem(tracker, item);
+        if (item?.type === "imageView") {
+          queueAttachmentCandidatesForLater(tracker, item);
         }
       }
 
@@ -169,9 +136,7 @@ export function createNotificationRuntime(deps) {
       const tracker = activeTurns.get(threadId);
       if (tracker && isTransientReconnectErrorMessage(message)) {
           noteReconnectObserved(tracker);
-          if (!isUxFlowCutoverEnabled(tracker)) {
-            markTurnReconnecting(tracker, "🔄 Temporary reconnect while processing. Continuing automatically while connection recovers...");
-          }
+          markTurnReconnecting(tracker, "🔄 Temporary reconnect while processing. Continuing automatically while connection recovers...");
           debugLog("transport", "transient reconnect while turn active", {
             threadId,
             turnId: threadId,
@@ -188,9 +153,6 @@ export function createNotificationRuntime(deps) {
   function onTurnReconnectPending(threadId, context = {}) {
     const tracker = activeTurns.get(threadId);
     if (!tracker) {
-      return;
-    }
-    if (isUxFlowCutoverEnabled(tracker)) {
       return;
     }
     const attempt = Number.isFinite(Number(context.attempt)) ? Number(context.attempt) : 1;
@@ -257,23 +219,14 @@ export function createNotificationRuntime(deps) {
         } else {
           pushStatusLine(tracker, `❌ Error: ${truncateStatusText(error.message, 220)}`);
         }
-        if (isUxFlowCutoverEnabled(tracker)) {
-          await safeSendToChannel(tracker.channel, `❌ Error: ${truncateStatusText(error.message, 220)}`);
-        } else {
-          await flushTrackerParagraphs(tracker, { force: true });
-        }
+        await safeSendToChannel(tracker.channel, `❌ Error: ${truncateStatusText(error.message, 220)}`);
         tracker.reject(error);
         return;
       }
 
       tracker.completed = true;
       transitionTurnPhase(tracker, TURN_PHASE.DONE);
-      if (isUxFlowCutoverEnabled(tracker)) {
-        await finalizeUxFlowStages(tracker);
-      } else {
-        pushStatusLine(tracker, "👍 Tool calling done");
-        await flushTrackerParagraphs(tracker, { force: true });
-      }
+      await finalizeUxFlowStages(tracker);
 
       tracker.fullText = normalizeFinalSummaryText(tracker.fullText);
       const summaryTextForDiscord = sanitizeSummaryForDiscord(tracker.fullText);
@@ -295,34 +248,20 @@ export function createNotificationRuntime(deps) {
         inferredSummaryPathCount: inferredSummaryPaths.length,
         inferredSummaryPaths: inferredSummaryPaths.slice(0, 8)
       });
-      if (isUxFlowCutoverEnabled(tracker)) {
-        if (summaryTextForDiscord) {
-          await sendChunkedToChannel(tracker.channel, summaryTextForDiscord);
-        }
-        const sentImages = await maybeSendInferredAttachmentsFromText(tracker, attachmentHintText);
-        tracker.hasSummaryImageAttachment = Number(sentImages) > 0;
-        debugLog("attachments", "inferred attachment send complete", {
-          threadId: tracker.threadId,
-          turnId: tracker.threadId,
-          discordMessageId: tracker.statusMessageId ?? null,
-          inferredSentCount: Number(sentImages) || 0,
-          telemetry: tracker.attachmentTelemetry ?? null
-        });
-        if (diffBlock) {
-          await sendChunkedToChannel(tracker.channel, diffBlock);
-        }
-      } else {
-        const renderPlan = buildTurnRenderPlan({
-          summaryText: tracker.fullText,
-          diffBlock,
-          verbosity: renderVerbosity
-        });
-        if (renderPlan.primaryMessage) {
-          await sendChunkedToChannel(tracker.channel, renderPlan.primaryMessage);
-        }
-        for (const statusMessage of renderPlan.statusMessages) {
-          await sendChunkedToChannel(tracker.channel, statusMessage);
-        }
+      if (summaryTextForDiscord) {
+        await sendChunkedToChannel(tracker.channel, summaryTextForDiscord);
+      }
+      const sentImages = await maybeSendInferredAttachmentsFromText(tracker, attachmentHintText);
+      tracker.hasSummaryImageAttachment = Number(sentImages) > 0;
+      debugLog("attachments", "inferred attachment send complete", {
+        threadId: tracker.threadId,
+        turnId: tracker.threadId,
+        discordMessageId: tracker.statusMessageId ?? null,
+        inferredSentCount: Number(sentImages) || 0,
+        telemetry: tracker.attachmentTelemetry ?? null
+      });
+      if (diffBlock) {
+        await sendChunkedToChannel(tracker.channel, diffBlock);
       }
 
       tracker.resolve(tracker.fullText);
@@ -628,143 +567,6 @@ export function createNotificationRuntime(deps) {
     }
   }
 
-  function shouldAnnounceStatusItem(itemType, verbosity = "user") {
-    if (typeof itemType !== "string" || !itemType) {
-      return false;
-    }
-    let announced;
-    if (verbosity === "debug") {
-      announced = new Set([
-        "commandExecution",
-        "mcpToolCall",
-        "webSearch",
-        "imageView",
-        "contextCompaction",
-        "collabAgentToolCall",
-        "toolCall"
-      ]);
-    } else if (verbosity === "ops") {
-      announced = new Set(["commandExecution", "mcpToolCall", "webSearch", "imageView", "toolCall"]);
-    } else {
-      announced = new Set(["imageView"]);
-    }
-    return announced.has(itemType);
-  }
-
-  function recordItemStatusLine(item, state) {
-    if (!item || typeof item !== "object") {
-      return null;
-    }
-    const lines = summarizeItemForStatus(item, state);
-    if (lines.length === 0) {
-      return null;
-    }
-    return lines[lines.length - 1];
-  }
-
-  async function sendStatusUpdateLine(tracker, line) {
-    if (!tracker?.channel || typeof line !== "string" || !line.trim()) {
-      return null;
-    }
-    const normalized = line.trim();
-    if (tracker.lastStatusUpdateLine === normalized) {
-      return null;
-    }
-    tracker.lastStatusUpdateLine = normalized;
-    const message = await safeSendToChannel(tracker.channel, normalized);
-    debugLog("status", "status line sent", {
-      threadId: tracker.threadId,
-      turnId: tracker.threadId,
-      discordMessageId: tracker.statusMessageId ?? null,
-      line: normalized
-    });
-    return message;
-  }
-
-  function makeItemStatusKey(item) {
-    if (!item || typeof item !== "object") {
-      return "";
-    }
-    if (item.id !== undefined && item.id !== null) {
-      const id = String(item.id);
-      if (id) {
-        return `id:${id}`;
-      }
-    }
-    if (item.type === "commandExecution" && typeof item.command === "string" && item.command) {
-      return `cmd:${item.command}`;
-    }
-    if (item.type === "webSearch") {
-      const queries = extractWebSearchDetails(item);
-      if (queries.length > 0) {
-        return `search:${queries[0]}`;
-      }
-    }
-    return "";
-  }
-
-  function shouldReactOnCompletion(itemType) {
-    return itemType === "commandExecution" || itemType === "webSearch";
-  }
-
-  async function reactToStatusCompletion(tracker, item) {
-    const key = makeItemStatusKey(item);
-    if (!key) {
-      return;
-    }
-    const emoji = completionReactionEmoji(item);
-    if (!emoji) {
-      return;
-    }
-    const messageId = tracker.itemStatusMessages.get(key);
-    if (!messageId) {
-      tracker.pendingCompletionReactions?.set(key, emoji);
-      return;
-    }
-    await reactToStatusMessage(tracker, messageId, key, emoji);
-  }
-
-  function completionReactionEmoji(item) {
-    if (!item || typeof item !== "object") {
-      return null;
-    }
-    if (item.type === "commandExecution") {
-      const exitCode = typeof item.exitCode === "number" ? item.exitCode : null;
-      if (exitCode === 0) {
-        return "✅";
-      }
-      if (exitCode !== null) {
-        return "❌";
-      }
-      return "✅";
-    }
-    if (item.type === "webSearch") {
-      return "✅";
-    }
-    return null;
-  }
-
-  async function reactToStatusMessage(tracker, messageId, key, emoji) {
-    if (!tracker.channel?.isTextBased?.()) {
-      return;
-    }
-    try {
-      const message = await tracker.channel.messages.fetch(messageId);
-      if (message) {
-        await message.react(emoji);
-      }
-    } catch (error) {
-    debugLog("status", "completion reaction failed", {
-      threadId: tracker.threadId,
-      turnId: tracker.threadId,
-      discordMessageId: tracker.statusMessageId ?? null,
-      key,
-      emoji,
-      error: String(error?.message ?? error)
-      });
-    }
-  }
-
   function pushStatusLine(tracker, line) {
     if (!tracker || typeof line !== "string") {
       return;
@@ -859,10 +661,6 @@ export function createNotificationRuntime(deps) {
         messageId: replacement.id
       });
     }
-  }
-
-  function isUxFlowCutoverEnabled(tracker) {
-    return tracker?.uxFlowCutover === true && tracker?.allowFileWrites !== false;
   }
 
   function isToolCallItemType(itemType) {

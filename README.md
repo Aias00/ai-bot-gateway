@@ -150,7 +150,6 @@ On startup, the bot:
 - `DISCORD_ATTACHMENT_ITEM_TYPES` (comma-separated) sets which item types upload files (default: `imageView,toolCall,mcpToolCall,commandExecution`).
 - `DISCORD_RENDER_VERBOSITY` controls status-line noise (`user` default, `ops`, `debug`).
 - `DISCORD_DEBUG_LOGGING=1` enables detailed turn/item/message-edit debug logs.
-- `DISCORD_UX_FLOW_CUTOVER=1` enables staged repo-channel UX flow (`Thinking` -> `Working` -> `Work complete` -> summary -> optional image -> optional diff). Set `0` to fall back.
 - `DISCORD_HEARTBEAT_PATH` sets the bridge heartbeat file path (default: `data/bridge-heartbeat.json`).
 - `DISCORD_HEARTBEAT_INTERVAL_MS` sets heartbeat write interval (default: `30000`, min effective `5000`).
 - `DISCORD_RESTART_REQUEST_PATH` sets CLI reload signal file path (default: `data/restart-request.json`).

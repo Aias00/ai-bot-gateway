@@ -54,7 +54,6 @@ export function loadRuntimeEnv() {
       ? Math.floor(configuredHeartbeatIntervalMs)
       : 30_000;
   const debugLoggingEnabled = process.env.DISCORD_DEBUG_LOGGING === "1";
-  const uxFlowCutover = process.env.DISCORD_UX_FLOW_CUTOVER !== "0";
   const projectsCategoryName =
     process.env.DISCORD_PROJECTS_CATEGORY_NAME ??
     process.env.DISCORD_LEGACY_CATEGORY_NAME ??
@@ -90,7 +89,6 @@ export function loadRuntimeEnv() {
     exitOnRestartAck,
     heartbeatIntervalMs,
     debugLoggingEnabled,
-    uxFlowCutover,
     projectsCategoryName,
     extraWritableRoots
   };

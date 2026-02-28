@@ -23,7 +23,6 @@ type TurnTracker = {
   statusMessageId: string;
   lifecyclePhase: string;
   allowFileWrites: boolean;
-  uxFlowCutover: boolean;
   sentAttachmentKeys: Set<string>;
   seenAttachmentIssueKeys: Set<string>;
   attachmentIssueCount: number;
@@ -40,14 +39,10 @@ type TurnTracker = {
   fullText: string;
   seenDelta: boolean;
   currentStatusLine: string;
-  lastStatusUpdateLine: string;
-  pendingCompletionReactions: Map<string, string>;
   lastRenderedContent: string;
   completed: boolean;
   failed: boolean;
   failureMessage: string;
-  itemStatusMessages: Map<string, string>;
-  itemStatusQueues: Map<string, string[]>;
   fileChangeSummary: Map<string, { added: number; removed: number }>;
   statusSyntheticCounter: number;
   flushTimer: null | ReturnType<typeof setTimeout>;
@@ -88,7 +83,6 @@ function createTracker() {
     statusMessageId: "thinking-1",
     lifecyclePhase: "running",
     allowFileWrites: true,
-    uxFlowCutover: true,
     sentAttachmentKeys: new Set(),
     seenAttachmentIssueKeys: new Set(),
     attachmentIssueCount: 0,
@@ -105,14 +99,10 @@ function createTracker() {
     fullText: "",
     seenDelta: false,
     currentStatusLine: "⏳ Thinking...",
-    lastStatusUpdateLine: "",
-    pendingCompletionReactions: new Map(),
     lastRenderedContent: "",
     completed: false,
     failed: false,
     failureMessage: "",
-    itemStatusMessages: new Map(),
-    itemStatusQueues: new Map(),
     fileChangeSummary: new Map([["src/index.js", { added: 2, removed: 1 }]]),
     statusSyntheticCounter: 0,
     flushTimer: null,
