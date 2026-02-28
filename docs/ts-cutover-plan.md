@@ -344,6 +344,7 @@ Why this fits sandbox constraints:
 - 2026-02-28: Split runtime bootstrap flow into `loadRuntimeBootstrapConfig` + `buildRuntimeGraph`; `bootstrapContext` now only composes those two steps.
 - 2026-02-28: Extracted runtime process orchestration from `mainRuntime` into `runBridgeProcess`; `mainRuntime` now only composes bootstrap context + process runner.
 - 2026-02-28: Refined `runBridgeProcess` by extracting runtime-ops construction and runtime attachment wiring into dedicated helpers (`createRuntimeOpsContext`, `attachBuiltRuntimes`).
+- 2026-02-28: Added explicit operator/developer stability scripts (`bun run verify`, `bun run test:stability`) and documented them in README.
 
 ## Reference Links
 

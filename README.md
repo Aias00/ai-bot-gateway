@@ -20,7 +20,11 @@ Personal Discord bridge for Codex app-server.
 ## Architecture Map
 
 ```text
-src/index.js                  Runtime entrypoint and orchestration wiring
+src/index.js                  Thin runtime entrypoint (`startMainRuntime`)
+src/app/mainRuntime.js        Compose runtime context + process runner
+src/app/loadRuntimeBootstrapConfig.js Env/config/state bootstrap loading
+src/app/buildRuntimeGraph.js  Build core runtime services/adapters/turn runner
+src/app/runBridgeProcess.js   Wire listeners/runtimes/startup/shutdown flow
 src/config/loadConfig.js      Env + channel config loading/normalization
 src/channels/context.js       Channel/repo context and bindings
 src/codexRpcClient.js         Codex app-server transport
@@ -29,7 +33,7 @@ src/codex/notificationMapper.js Normalized notification boundaries
 src/codex/approvalPayloads.js Approval request/response mapping
 src/attachments/service.js    Attachment candidate extraction + upload policy
 src/render/messageRenderer.js Message render plan, redaction, chunking
-src/cli/**                    Operator CLI (`status`, `doctor`, `reload`)
+src/cli/**                    Operator CLI (`status`, `doctor`, `reload`, `logs`)
 src/app/main.ts               TS bootstrap entry used by `start:ts`
 src/types/**                  TS boundary contracts for cutover
 ```
@@ -95,6 +99,7 @@ On startup, the bot:
 
 - `bun run cli status` shows runtime paths, binding count, and heartbeat status.
 - `bun run cli logs` tails active bridge stdout/stderr logs (same paths used by launchd when configured).
+  - Supports `--clear` and `--since <10m|2h|iso>` for faster incident triage.
 - `bun run cli config-validate` validates channel/env config and reports effective defaults.
 - `bun run cli doctor` runs operational diagnostics (token/writable paths/attachment roots).
 - `bun run cli reload [reason]` writes a restart intent file for host-managed supervisors.
@@ -103,6 +108,11 @@ On startup, the bot:
 - Optional global command from any directory:
   - Run `npm link` once in this repo.
   - Then use `dc-bridge status`, `dc-bridge logs`, `dc-bridge restart "manual restart"`, etc.
+
+## Stability Checks
+
+- `bun run verify` runs `typecheck + lint + test`.
+- `bun run test:stability` runs the restart/recovery/transcript/approval integration stability suite.
 
 ## Permanent Service Notes
 
