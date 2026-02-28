@@ -1,6 +1,6 @@
 # Codex Discord Bridge
 
-[![Codex Discord Bridge Hero](public/images/cover_2.png)](https://youtu.be/w1mGVW2mk5c)
+[![Codex Discord Bridge Hero](public/images/cover_new.png)](https://youtu.be/RRF-F5jDS50)
 
 Personal Discord bridge for Codex app-server.
 
