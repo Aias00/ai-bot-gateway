@@ -219,8 +219,8 @@ Observed patterns and how they compare to us:
 ## Phase 5: Tests + Reliability Gates
 
 - [x] Unit tests for path/policy/extraction logic.
-- [ ] Unit tests for approval decision mapping.
-- [ ] Integration smoke test for one turn with outbound image upload.
+- [x] Unit tests for approval decision mapping.
+- [x] Integration smoke test for one turn with outbound image upload.
 - [x] Add CI check: typecheck + test.
 - [ ] Add lint stage to CI once lint config is introduced.
 
@@ -308,6 +308,7 @@ Why this fits sandbox constraints:
 - 2026-02-28: Phase 5 started: added Bun unit tests for attachment extraction/path policy (`test/attachments.service.test.ts`) and a `bun test` script in `package.json`.
 - 2026-02-28: Tightened inferred media path regex to stop at whitespace (fixes false captures like `"/tmp/one.png then /tmp/two.png"` and stabilizes last-match inference behavior).
 - 2026-02-28: Added GitHub Actions workflow (`.github/workflows/ci.yml`) for `bun run typecheck` and `bun test` on pushes/PRs.
+- 2026-02-28: Added approval payload unit tests (`test/codex.approvalPayloads.test.ts`) and outbound attachment integration smoke tests (`test/attachments.integration-smoke.test.ts`) including macOS realpath root handling.
 
 ## Reference Links
 
