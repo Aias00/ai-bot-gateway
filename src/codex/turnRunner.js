@@ -1,4 +1,5 @@
 import path from "node:path";
+import { TURN_PHASE } from "../turns/lifecycle.js";
 
 export function createTurnRunner(deps) {
   const {
@@ -11,7 +12,8 @@ export function createTurnRunner(deps) {
     buildSandboxPolicyForTurn,
     isThreadNotFoundError,
     finalizeTurn,
-    onActiveTurnsChanged
+    onActiveTurnsChanged,
+    onTurnReconnectPending
   } = deps;
 
   function enqueuePrompt(repoChannelId, job) {
@@ -43,6 +45,9 @@ export function createTurnRunner(deps) {
       const job = queue.jobs.shift();
       let startedThreadId = null;
       let turnPromise = null;
+      const settleTimeoutMs = Number.isFinite(Number(process.env.DISCORD_TURN_SETTLE_TIMEOUT_MS))
+        ? Math.max(500, Math.floor(Number(process.env.DISCORD_TURN_SETTLE_TIMEOUT_MS)))
+        : 120_000;
       try {
         let threadId = await ensureThreadId(repoChannelId, job.setup);
         startedThreadId = threadId;
@@ -87,12 +92,10 @@ export function createTurnRunner(deps) {
         };
 
         let reconnectRetryCount = 0;
+        let reconnectLingerCount = 0;
         const maxTurnReconnectRetries = Number.isFinite(Number(process.env.DISCORD_TURN_RECONNECT_MAX_RETRIES))
           ? Math.max(1, Math.floor(Number(process.env.DISCORD_TURN_RECONNECT_MAX_RETRIES)))
           : 24;
-        const settleTimeoutMs = Number.isFinite(Number(process.env.DISCORD_TURN_SETTLE_TIMEOUT_MS))
-          ? Math.max(5_000, Math.floor(Number(process.env.DISCORD_TURN_SETTLE_TIMEOUT_MS)))
-          : 120_000;
         while (true) {
           try {
             await runTurn(threadId);
@@ -132,6 +135,15 @@ export function createTurnRunner(deps) {
                 continue;
               }
               // Progress already observed: do not replay same prompt and risk duplicate output.
+              reconnectLingerCount += 1;
+              onTurnReconnectPending?.(threadId, {
+                attempt: reconnectLingerCount,
+                message
+              });
+              const lingerSettlement = turnPromise ? await waitForTurnSettlement(turnPromise, settleTimeoutMs) : "timeout";
+              if (lingerSettlement === "resolved") {
+                break;
+              }
               throw error;
             }
 
@@ -258,6 +270,7 @@ export function createTurnRunner(deps) {
       statusMessageId: message.id,
       channel: message.channel,
       cwd: typeof cwd === "string" && cwd ? cwd : null,
+      lifecyclePhase: TURN_PHASE.RUNNING,
       allowFileWrites: options.allowFileWrites !== false,
       sentAttachmentKeys: new Set(),
       seenAttachmentIssueKeys: new Set(),
@@ -299,6 +312,7 @@ export function createTurnRunner(deps) {
 
     activeTurns.delete(threadId);
     void onActiveTurnsChanged?.();
+    tracker.lifecyclePhase = TURN_PHASE.CANCELLED;
     tracker.reject(error ?? new Error("Turn aborted"));
   }
 

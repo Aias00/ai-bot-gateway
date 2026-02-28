@@ -33,6 +33,7 @@ import {
   truncateForDiscordMessage
 } from "./render/messageRenderer.js";
 import { StateStore } from "./stateStore.js";
+import { TURN_PHASE, transitionTurnPhase } from "./turns/lifecycle.js";
 import { normalizeFinalSummaryText } from "./turns/textNormalization.js";
 
 dotenv.config();
@@ -139,6 +140,7 @@ const turnRunner = createTurnRunner({
   buildSandboxPolicyForTurn,
   isThreadNotFoundError,
   finalizeTurn,
+  onTurnReconnectPending,
   onActiveTurnsChanged: () => runtimeOps?.writeHeartbeatFile()
 });
 const attachmentInputBuilder = createAttachmentInputBuilder({
@@ -811,6 +813,7 @@ async function handleNotification({ method, params }) {
     if (!tracker) {
       return;
     }
+    transitionTurnPhase(tracker, TURN_PHASE.RUNNING);
     debugLog("item-delta", "agent delta", { threadId, deltaLength: delta.length });
     appendTrackerText(tracker, delta, { fromDelta: true });
     return;
@@ -824,6 +827,9 @@ async function handleNotification({ method, params }) {
     const tracker = activeTurns.get(threadId);
     if (!tracker) {
       return;
+    }
+    if (state === "started") {
+      transitionTurnPhase(tracker, TURN_PHASE.RUNNING);
     }
     const item = normalized.item;
     const state = normalized.state;
@@ -892,6 +898,7 @@ async function handleNotification({ method, params }) {
     if (threadId) {
       const tracker = activeTurns.get(threadId);
       if (tracker && isTransientReconnectErrorMessage(message)) {
+        markTurnReconnecting(tracker, "🔄 Temporary reconnect while processing. Continuing automatically while connection recovers...");
         debugLog("transport", "transient reconnect while turn active", {
           threadId,
           message: truncateStatusText(String(message ?? ""), 200)
@@ -901,6 +908,19 @@ async function handleNotification({ method, params }) {
       await finalizeTurn(threadId, new Error(message));
     }
   }
+}
+
+function onTurnReconnectPending(threadId, context = {}) {
+  const tracker = activeTurns.get(threadId);
+  if (!tracker) {
+    return;
+  }
+  const attempt = Number.isFinite(Number(context.attempt)) ? Number(context.attempt) : 1;
+  const suffix = attempt > 1 ? ` (retry ${attempt})` : "";
+  markTurnReconnecting(
+    tracker,
+    `🔄 Temporary reconnect while processing. Continuing automatically while connection recovers...${suffix}`
+  );
 }
 
 async function handleServerRequest({ id, method, params }) {
@@ -1214,6 +1234,9 @@ async function finalizeTurn(threadId, error) {
   if (tracker.finalizing) {
     return;
   }
+  if (!transitionTurnPhase(tracker, TURN_PHASE.FINALIZING)) {
+    return;
+  }
   tracker.finalizing = true;
 
   if (tracker.flushTimer) {
@@ -1226,10 +1249,11 @@ async function finalizeTurn(threadId, error) {
       tracker.failed = true;
       tracker.completed = true;
       tracker.failureMessage = error.message;
+      transitionTurnPhase(tracker, TURN_PHASE.FAILED);
       if (isTransientReconnectErrorMessage(error.message)) {
         pushStatusLine(
           tracker,
-          "🔄 Temporary reconnect while processing. Please retry if no follow-up response appears."
+          "🔄 Temporary reconnect while processing did not recover in time. Please retry."
         );
       } else {
         pushStatusLine(tracker, `❌ Error: ${truncateStatusText(error.message, 220)}`);
@@ -1240,6 +1264,7 @@ async function finalizeTurn(threadId, error) {
     }
 
     tracker.completed = true;
+    transitionTurnPhase(tracker, TURN_PHASE.DONE);
     pushStatusLine(tracker, "👍 Tool calling done");
     await flushTrackerParagraphs(tracker, { force: true });
 
@@ -1262,6 +1287,15 @@ async function finalizeTurn(threadId, error) {
     activeTurns.delete(threadId);
     await writeHeartbeatFile();
   }
+}
+
+function markTurnReconnecting(tracker, line) {
+  if (!tracker) {
+    return;
+  }
+  transitionTurnPhase(tracker, TURN_PHASE.RECONNECTING);
+  pushStatusLine(tracker, line);
+  scheduleFlush(tracker);
 }
 
 function appendTrackerText(tracker, text, { fromDelta }) {

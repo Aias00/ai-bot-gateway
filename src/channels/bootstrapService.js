@@ -64,7 +64,7 @@ export function createBootstrapService(deps) {
       if (findChannelIdByCwd(cwd)) {
         continue;
       }
-      let channel = null;
+      let channel;
       try {
         channel = await ensureProjectChannel(guild, cwd, projectsCategory.id);
       } catch (error) {
