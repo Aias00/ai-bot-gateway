@@ -23,7 +23,8 @@ import {
 } from "./codex/approvalPayloads.js";
 import { createTurnRunner } from "./codex/turnRunner.js";
 import {
-  redactLocalPathsForDiscord,
+  buildTurnRenderPlan,
+  normalizeRenderVerbosity,
   sendChunkedToChannel as sendChunkedToChannelFromRenderer,
   truncateForDiscordMessage
 } from "./render/messageRenderer.js";
@@ -70,6 +71,7 @@ const attachmentIssueLimitPerTurn =
   Number.isFinite(configuredAttachmentIssueLimit) && configuredAttachmentIssueLimit >= 0
     ? Math.floor(configuredAttachmentIssueLimit)
     : 1;
+const renderVerbosity = normalizeRenderVerbosity(process.env.DISCORD_RENDER_VERBOSITY);
 const debugLoggingEnabled = process.env.DISCORD_DEBUG_LOGGING === "1";
 const projectsCategoryName =
   process.env.DISCORD_PROJECTS_CATEGORY_NAME ??
@@ -1315,7 +1317,7 @@ async function handleNotification({ method, params }) {
       recordFileChanges(tracker, item);
     }
 
-    if (shouldAnnounceStatusItem(item?.type)) {
+    if (shouldAnnounceStatusItem(item?.type, renderVerbosity)) {
       const statusLine = recordItemStatusLine(item, state);
       if (statusLine) {
         const statusMessage = await sendStatusUpdateLine(tracker, statusLine);
@@ -1702,14 +1704,17 @@ async function finalizeTurn(threadId, error) {
   pushStatusLine(tracker, "👍 Tool calling done");
   await flushTrackerParagraphs(tracker, { force: true });
 
-  const summaryText = tracker.fullText.trim();
-  if (summaryText) {
-    await sendChunkedToChannel(tracker.channel, redactLocalPathsForDiscord(summaryText));
-  }
-
   const diffBlock = buildFileDiffSection(tracker);
-  if (diffBlock) {
-    await sendChunkedToChannel(tracker.channel, diffBlock);
+  const renderPlan = buildTurnRenderPlan({
+    summaryText: tracker.fullText,
+    diffBlock,
+    verbosity: renderVerbosity
+  });
+  if (renderPlan.primaryMessage) {
+    await sendChunkedToChannel(tracker.channel, renderPlan.primaryMessage);
+  }
+  for (const statusMessage of renderPlan.statusMessages) {
+    await sendChunkedToChannel(tracker.channel, statusMessage);
   }
 
   tracker.resolve(tracker.fullText);
@@ -1725,19 +1730,26 @@ function appendTrackerText(tracker, text, { fromDelta }) {
   }
 }
 
-function shouldAnnounceStatusItem(itemType) {
+function shouldAnnounceStatusItem(itemType, verbosity = "user") {
   if (typeof itemType !== "string" || !itemType) {
     return false;
   }
-  const announced = new Set([
-    "commandExecution",
-    "mcpToolCall",
-    "webSearch",
-    "imageView",
-    "contextCompaction",
-    "collabAgentToolCall",
-    "toolCall"
-  ]);
+  let announced;
+  if (verbosity === "debug") {
+    announced = new Set([
+      "commandExecution",
+      "mcpToolCall",
+      "webSearch",
+      "imageView",
+      "contextCompaction",
+      "collabAgentToolCall",
+      "toolCall"
+    ]);
+  } else if (verbosity === "ops") {
+    announced = new Set(["commandExecution", "mcpToolCall", "webSearch", "imageView", "toolCall"]);
+  } else {
+    announced = new Set(["imageView"]);
+  }
   return announced.has(itemType);
 }
 

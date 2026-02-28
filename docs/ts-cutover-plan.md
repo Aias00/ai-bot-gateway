@@ -201,12 +201,12 @@ Observed patterns and how they compare to us:
 
 ## Phase 3.5: Messaging UX Pass (New)
 
-- [ ] Create typed renderer contract:
+- [x] Create typed renderer contract:
   - `primaryMessage` (required)
   - `statusMessages[]` (optional, deduped)
   - `attachments[]` (optional, explicit)
-- [ ] Add verbosity levels: `user`, `ops`, `debug`.
-- [ ] Gate noisy internals behind `DISCORD_DEBUG_LOGGING` or explicit commands.
+- [x] Add verbosity levels: `user`, `ops`, `debug`.
+- [x] Gate noisy internals behind `DISCORD_DEBUG_LOGGING` or explicit commands.
 - [ ] Ensure "thinking/tooling" indicator remains singular and updates in place where possible.
 - [ ] Add snapshot tests for representative turn transcripts (happy path + failures + approvals + file send).
 
@@ -266,6 +266,7 @@ Why this fits sandbox constraints:
 | 2026-02-28 | Inferred media upload should use last-match wins within one message | Prevent duplicate uploads from repeated path mentions in assistant text | Decided |
 | 2026-02-28 | Only announce attachment failures for high-confidence path refs and explicit user-request/image flows | Prevent `Attachment missing` spam from weak filename-only hints during routine command output | Decided |
 | 2026-02-28 | Cap attachment issue notices per turn and suppress them in read-only/general mode | Keep conversation UX clean while preserving actionable diagnostics in repo channels | Decided |
+| 2026-02-28 | Add renderer verbosity modes (`user`/`ops`/`debug`) with `user` default | Reduce status-line noise by default while preserving operator/developer diagnostics | Decided |
 | 2026-02-28 | Restart control must be host-managed via supervisor + signal files | Sandbox limits prevent reliable direct host process termination | Decided |
 
 ## Open Questions
@@ -299,6 +300,7 @@ Why this fits sandbox constraints:
 - 2026-02-28: Phase 3 started: attachment intent classification added (`explicit_structured` + optional `inferred_text_fallback`), fallback scraping gated behind `DISCORD_ATTACHMENT_INFER_FROM_TEXT` (default off), inferred path upload uses last-match wins, and per-turn attachment telemetry counters are tracked.
 - 2026-02-28: Phase 3 hardening pass: filename/name-based candidates now require high-confidence path hints, `imageView` attachment candidates are tagged `explicit_user_request`, failure announcements are restricted to explicit/high-confidence flows, and inferred traversal typo (`paths.length`) was fixed.
 - 2026-02-28: Added per-turn attachment issue cap (`DISCORD_MAX_ATTACHMENT_ISSUES_PER_TURN`, default `1`) and forced issue suppression in read-only/general mode (`allowFileWrites=false`) to prevent channel noise.
+- 2026-02-28: Phase 3.5 started: added renderer plan contract (`primaryMessage`, `statusMessages`, `attachments`) and introduced `DISCORD_RENDER_VERBOSITY` with status-item gating (`user` default, `ops`, `debug`).
 
 ## Reference Links
 

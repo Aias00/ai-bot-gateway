@@ -1,5 +1,28 @@
 import path from "node:path";
 
+export function normalizeRenderVerbosity(value) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "ops" || normalized === "debug") {
+    return normalized;
+  }
+  return "user";
+}
+
+export function buildTurnRenderPlan({ summaryText, diffBlock, verbosity = "user" }) {
+  const primaryMessage = redactLocalPathsForDiscord(typeof summaryText === "string" ? summaryText.trim() : "");
+  const statusMessages = [];
+  if (typeof diffBlock === "string" && diffBlock.trim()) {
+    if (verbosity === "ops" || verbosity === "debug") {
+      statusMessages.push(diffBlock);
+    }
+  }
+  return {
+    primaryMessage,
+    statusMessages,
+    attachments: []
+  };
+}
+
 export function truncateForDiscordMessage(text, limit = 1900) {
   if (typeof text !== "string") {
     return "";

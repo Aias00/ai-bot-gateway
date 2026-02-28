@@ -94,4 +94,5 @@ On startup, the bot:
 - `DISCORD_ATTACHMENT_MAX_BYTES` caps attachment size (default: 8MB).
 - `DISCORD_ATTACHMENT_ROOTS` (colon-separated absolute paths) allowlists attachment file locations.
 - `DISCORD_ATTACHMENT_ITEM_TYPES` (comma-separated) sets which item types upload files (default: `imageView`).
+- `DISCORD_RENDER_VERBOSITY` controls status-line noise (`user` default, `ops`, `debug`).
 - `DISCORD_DEBUG_LOGGING=1` enables detailed turn/item/message-edit debug logs.
