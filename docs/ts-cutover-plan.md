@@ -339,6 +339,7 @@ Why this fits sandbox constraints:
 - 2026-02-28: Continued `src/index.js` decomposition by extracting runtime env parsing (`src/config/runtimeEnv.js`), shared runtime helpers (`src/app/runtimeUtils.js`), and startup/shutdown lifecycle orchestration (`src/app/startup.js`, `src/app/shutdown.js`).
 - 2026-02-28: Continued `src/index.js` decomposition by extracting listener wiring (`src/app/wireListeners.js`) and runtime delegation proxies (`src/app/runtimeAdapters.js`), plus dedicated adapter unit coverage.
 - 2026-02-28: `src/index.js` is now a thin bootstrap (`startMainRuntime`), with primary runtime orchestration moved to `src/app/mainRuntime.js`.
+- 2026-02-28: Split runtime bootstrap into `src/app/bootstrapContext.js` + leaner `src/app/mainRuntime.js` to isolate setup state from orchestration/wiring.
 
 ## Reference Links
 
