@@ -1,8 +1,9 @@
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { parseAttachmentItemTypes, parsePathListEnv } from "./loadConfig.js";
+import { parseAttachmentItemTypes } from "./loadConfig.js";
 import { normalizeRenderVerbosity } from "../render/messageRenderer.js";
+import { parsePathListEnv } from "../utils/pathEnv.js";
 
 export function loadRuntimeEnv() {
   const configPath = path.resolve(process.env.CHANNEL_CONFIG_PATH ?? "config/channels.json");

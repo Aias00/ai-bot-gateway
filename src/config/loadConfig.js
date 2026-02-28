@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { parsePathListEnv as parsePathListEnvFromUtil } from "../utils/pathEnv.js";
 
 export async function loadConfig(filePath, options = {}) {
   const defaultModel = typeof options.defaultModel === "string" ? options.defaultModel : "gpt-5.3-codex";
@@ -140,12 +141,5 @@ export function parseAttachmentItemTypes(raw) {
 }
 
 export function parsePathListEnv(raw) {
-  if (typeof raw !== "string" || !raw.trim()) {
-    return [];
-  }
-  return raw
-    .split(":")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-    .map((entry) => path.resolve(entry));
+  return parsePathListEnvFromUtil(raw);
 }
