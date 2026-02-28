@@ -7,8 +7,12 @@ node_modules/
 
 # Local runtime state
 data/state.json
+data/restart-request.json
+data/bridge-heartbeat.json
+data/restart-ack.json
 config/channels.json
 *.log
+com.codex.discord.bridge.plist
 
 # OS/editor noise
 .DS_Store

@@ -17,6 +17,27 @@ Personal Discord bridge for Codex app-server.
 - Handles approval requests via buttons (with command fallback).
 - Uploads attachment files for configured item types (default: `imageView` screenshots).
 
+## Architecture Map
+
+```text
+src/index.js                  Thin runtime entrypoint (`startMainRuntime`)
+src/app/mainRuntime.js        Compose runtime context + process runner
+src/app/loadRuntimeBootstrapConfig.js Env/config/state bootstrap loading
+src/app/buildRuntimeGraph.js  Build core runtime services/adapters/turn runner
+src/app/runBridgeProcess.js   Wire listeners/runtimes/startup/shutdown flow
+src/config/loadConfig.js      Env + channel config loading/normalization
+src/channels/context.js       Channel/repo context and bindings
+src/codexRpcClient.js         Codex app-server transport
+src/codex/turnRunner.js       Per-channel queue and turn lifecycle
+src/codex/notificationMapper.js Normalized notification boundaries
+src/codex/approvalPayloads.js Approval request/response mapping
+src/attachments/service.js    Attachment candidate extraction + upload policy
+src/render/messageRenderer.js Message render plan, redaction, chunking
+src/cli/**                    Operator CLI (`status`, `doctor`, `reload`, `logs`)
+src/app/main.ts               TS bootstrap entry used by `start:ts`
+src/types/**                  TS boundary contracts for cutover
+```
+
 ## Requirements
 
 - Bun 1.2+
@@ -74,6 +95,35 @@ On startup, the bot:
 - `!rebuild` destructive rebuild: delete managed channels/bindings and recreate project channels from discovery
 - Plain message in a managed repo channel is treated as a prompt
 
+## Operator CLI
+
+- `bun run cli status` shows runtime paths, binding count, and heartbeat status.
+- `bun run cli logs` tails active bridge stdout/stderr logs (same paths used by launchd when configured).
+  - Supports `--clear` and `--since <10m|2h|iso>` for faster incident triage.
+- `bun run cli config-validate` validates channel/env config and reports effective defaults.
+- `bun run cli doctor` runs operational diagnostics (token/writable paths/attachment roots).
+- `bun run cli reload [reason]` writes a restart intent file for host-managed supervisors.
+- `bun run cli restart [reason]` alias for `reload`.
+- `scripts/restart-supervisor.sh -- bun run start` runs a host-side process loop that watches `data/restart-request.json` and restarts the bridge externally (with throttle/backoff).
+- Optional global command from any directory:
+  - Run `npm link` once in this repo.
+  - Then use `dc-bridge status`, `dc-bridge logs`, `dc-bridge restart "manual restart"`, etc.
+
+## Stability Checks
+
+- `bun run verify` runs `typecheck + lint + test`.
+- `bun run test:stability` runs the restart/recovery/transcript/approval integration stability suite.
+
+## Permanent Service Notes
+
+- For `launchd`, make sure `ProgramArguments` includes the absolute Bun path after `--`:
+  - `scripts/restart-supervisor.sh -- /absolute/path/to/bun run start`
+- If `ProgramArguments` accidentally inserts an empty entry, supervisor now fails fast with a clear error.
+- Include both Bun and Codex paths in launchd env when needed:
+  - `PATH` should include Bun install dir and Codex install dir.
+  - You can set `CODEX_BIN` explicitly in `EnvironmentVariables`.
+- Supervisor now clears `data/restart-request.json` after consuming a restart request to avoid repeated restarts from stale files.
+
 
 ## Notes
 
@@ -89,7 +139,17 @@ On startup, the bot:
 - Project channels are managed under `codex-projects` by default. Override with `DISCORD_PROJECTS_CATEGORY_NAME`.
 - Image attachments are forwarded into Codex turns as image inputs (downloaded locally by the bot).
 - `DISCORD_ENABLE_ATTACHMENTS` toggles outgoing attachment uploads (defaults to enabled).
+- `DISCORD_ATTACHMENT_INFER_FROM_TEXT` enables inferred uploads from path mentions in tool output text (default: disabled; set to `1` to enable fallback mode).
+- `DISCORD_MAX_ATTACHMENT_ISSUES_PER_TURN` caps "attachment missing/blocked/etc." notices per turn (default: `1`; read-only/general mode forces `0`).
 - `DISCORD_ATTACHMENT_MAX_BYTES` caps attachment size (default: 8MB).
 - `DISCORD_ATTACHMENT_ROOTS` (colon-separated absolute paths) allowlists attachment file locations.
 - `DISCORD_ATTACHMENT_ITEM_TYPES` (comma-separated) sets which item types upload files (default: `imageView`).
+- `DISCORD_RENDER_VERBOSITY` controls status-line noise (`user` default, `ops`, `debug`).
 - `DISCORD_DEBUG_LOGGING=1` enables detailed turn/item/message-edit debug logs.
+- `DISCORD_HEARTBEAT_PATH` sets the bridge heartbeat file path (default: `data/bridge-heartbeat.json`).
+- `DISCORD_HEARTBEAT_INTERVAL_MS` sets heartbeat write interval (default: `30000`, min effective `5000`).
+- `DISCORD_RESTART_REQUEST_PATH` sets CLI reload signal file path (default: `data/restart-request.json`).
+- `DISCORD_RESTART_ACK_PATH` sets the host-ack marker path written by supervisor (default: `data/restart-ack.json`).
+- `DISCORD_EXIT_ON_RESTART_ACK=1` lets bridge self-exit after ack marker detection (disabled by default).
+- `DISCORD_STDOUT_LOG_PATH` overrides CLI `logs` stdout file path (otherwise launchd plist or `/tmp/codex-discord-bridge.out.log`).
+- `DISCORD_STDERR_LOG_PATH` overrides CLI `logs` stderr file path (otherwise launchd plist or `/tmp/codex-discord-bridge.err.log`).
