@@ -80,6 +80,7 @@ On startup, the bot:
 - `bun run cli config-validate` validates channel/env config and reports effective defaults.
 - `bun run cli doctor` runs operational diagnostics (token/writable paths/attachment roots).
 - `bun run cli reload [reason]` writes a restart intent file for host-managed supervisors.
+- `scripts/restart-supervisor.sh -- bun run start` runs a host-side process loop that watches `data/restart-request.json` and restarts the bridge externally (with throttle/backoff).
 
 
 ## Notes

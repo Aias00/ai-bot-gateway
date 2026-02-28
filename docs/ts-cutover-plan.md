@@ -247,9 +247,9 @@ Planned commands:
 
 Restart handshake design:
 - [x] Bridge emits heartbeat file periodically (for host monitor visibility).
-- [ ] Host supervisor script watches restart-request signal and performs restart externally. (operator script pending)
+- [x] Host supervisor script watches restart-request signal and performs restart externally.
 - [ ] Bridge optionally self-exits gracefully when restart request is acknowledged by host marker.
-- [ ] Add backoff/lock to prevent restart loops.
+- [x] Add backoff/lock to prevent restart loops.
 
 Why this fits sandbox constraints:
 - In-sandbox bot code only writes files in workspace-writable roots.
@@ -311,6 +311,7 @@ Why this fits sandbox constraints:
 - 2026-02-28: Added GitHub Actions workflow (`.github/workflows/ci.yml`) for `bun run typecheck` and `bun test` on pushes/PRs.
 - 2026-02-28: Added approval payload unit tests (`test/codex.approvalPayloads.test.ts`) and outbound attachment integration smoke tests (`test/attachments.integration-smoke.test.ts`) including macOS realpath root handling.
 - 2026-02-28: Phase 6 started: implemented operator CLI commands (`status`, `config-validate`, `doctor`, `reload`), added runtime heartbeat writer, and documented env paths for heartbeat/restart signal files.
+- 2026-02-28: Added host supervisor helper script (`scripts/restart-supervisor.sh`) that monitors restart-request signals and restarts with throttle/backoff guardrails.
 
 ## Reference Links
 
