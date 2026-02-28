@@ -207,7 +207,7 @@ Observed patterns and how they compare to us:
   - `attachments[]` (optional, explicit)
 - [x] Add verbosity levels: `user`, `ops`, `debug`.
 - [x] Gate noisy internals behind `DISCORD_DEBUG_LOGGING` or explicit commands.
-- [ ] Ensure "thinking/tooling" indicator remains singular and updates in place where possible.
+- [x] Ensure "thinking/tooling" indicator remains singular and updates in place where possible.
 - [ ] Add snapshot tests for representative turn transcripts (happy path + failures + approvals + file send).
 
 ## Phase 4: Discord + Codex Boundary Contracts
@@ -301,6 +301,7 @@ Why this fits sandbox constraints:
 - 2026-02-28: Phase 3 hardening pass: filename/name-based candidates now require high-confidence path hints, `imageView` attachment candidates are tagged `explicit_user_request`, failure announcements are restricted to explicit/high-confidence flows, and inferred traversal typo (`paths.length`) was fixed.
 - 2026-02-28: Added per-turn attachment issue cap (`DISCORD_MAX_ATTACHMENT_ISSUES_PER_TURN`, default `1`) and forced issue suppression in read-only/general mode (`allowFileWrites=false`) to prevent channel noise.
 - 2026-02-28: Phase 3.5 started: added renderer plan contract (`primaryMessage`, `statusMessages`, `attachments`) and introduced `DISCORD_RENDER_VERBOSITY` with status-item gating (`user` default, `ops`, `debug`).
+- 2026-02-28: Added status-line dedupe (`lastStatusUpdateLine`) to prevent repeated identical lifecycle/status posts in the same turn.
 
 ## Reference Links
 

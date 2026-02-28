@@ -1770,6 +1770,9 @@ async function sendStatusUpdateLine(tracker, line) {
     return null;
   }
   const normalized = line.trim();
+  if (tracker.lastStatusUpdateLine === normalized) {
+    return null;
+  }
   tracker.lastStatusUpdateLine = normalized;
   const message = await safeSendToChannel(tracker.channel, normalized);
   debugLog("status", "status line sent", {
