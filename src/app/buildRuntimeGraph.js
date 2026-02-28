@@ -2,7 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Client, GatewayIntentBits } from "discord.js";
 import { CodexRpcClient } from "../codexRpcClient.js";
-import { maybeSendAttachmentsForItem as maybeSendAttachmentsForItemFromService } from "../attachments/service.js";
+import {
+  maybeSendAttachmentsForItem as maybeSendAttachmentsForItemFromService,
+  maybeSendInferredAttachmentsFromText as maybeSendInferredAttachmentsFromTextFromService
+} from "../attachments/service.js";
 import { createAttachmentInputBuilder } from "../attachments/inputBuilder.js";
 import { createChannelMessaging } from "./channelMessaging.js";
 import { createRuntimeAdapters } from "./runtimeAdapters.js";
@@ -27,7 +30,8 @@ export async function buildRuntimeGraph(deps) {
     attachmentItemTypes,
     attachmentIssueLimitPerTurn,
     inFlightRecoveryPath,
-    extraWritableRoots
+    extraWritableRoots,
+    uxFlowCutover
   } = runtimeEnv;
 
   const discord = new Client({
@@ -84,6 +88,7 @@ export async function buildRuntimeGraph(deps) {
     getRuntimeOps: () => refs.runtimeOps,
     getDiscord: () => discord,
     maybeSendAttachmentsForItemFromService,
+    maybeSendInferredAttachmentsFromTextFromService,
     sendChunkedToChannelFromRenderer,
     attachmentConfig: {
       attachmentsEnabled,
@@ -120,6 +125,7 @@ export async function buildRuntimeGraph(deps) {
     onTurnAborted: async (threadId) => {
       await turnRecoveryStore.removeTurn(threadId);
     },
+    uxFlowCutover,
     onActiveTurnsChanged: () => refs.runtimeOps?.writeHeartbeatFile()
   });
 

@@ -1,6 +1,6 @@
 import { normalizeCodexNotification } from "../codex/notificationMapper.js";
 import { extractAgentMessageText, isTransientReconnectErrorMessage } from "../codex/eventUtils.js";
-import { buildTurnRenderPlan, truncateForDiscordMessage } from "../render/messageRenderer.js";
+import { buildTurnRenderPlan, sanitizeSummaryForDiscord, truncateForDiscordMessage } from "../render/messageRenderer.js";
 import { TURN_PHASE, transitionTurnPhase } from "../turns/lifecycle.js";
 import { createNotificationRuntime } from "../turns/notificationRuntime.js";
 import {
@@ -23,11 +23,13 @@ export function buildNotificationRuntime(deps) {
     normalizeCodexNotification,
     extractAgentMessageText,
     maybeSendAttachmentsForItem: runtimeAdapters.maybeSendAttachmentsForItem,
+    maybeSendInferredAttachmentsFromText: runtimeAdapters.maybeSendInferredAttachmentsFromText,
     recordFileChanges,
     summarizeItemForStatus,
     extractWebSearchDetails,
     buildFileDiffSection,
     buildTurnRenderPlan,
+    sanitizeSummaryForDiscord,
     sendChunkedToChannel,
     normalizeFinalSummaryText,
     truncateStatusText,

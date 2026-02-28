@@ -1,3 +1,5 @@
+import { collectLikelyLocalPathsFromText, extractAttachmentCandidates } from "../attachments/service.js";
+
 export function createNotificationRuntime(deps) {
   const {
     activeTurns,
@@ -7,11 +9,13 @@ export function createNotificationRuntime(deps) {
     normalizeCodexNotification,
     extractAgentMessageText,
     maybeSendAttachmentsForItem,
+    maybeSendInferredAttachmentsFromText,
     recordFileChanges,
     summarizeItemForStatus,
     extractWebSearchDetails,
     buildFileDiffSection,
     buildTurnRenderPlan,
+    sanitizeSummaryForDiscord = (text) => String(text ?? "").trim(),
     sendChunkedToChannel,
     normalizeFinalSummaryText,
     truncateStatusText,
@@ -21,7 +25,10 @@ export function createNotificationRuntime(deps) {
     discordMaxMessageLength,
     debugLog,
     writeHeartbeatFile,
-    onTurnFinalized
+    onTurnFinalized,
+    turnCompletionQuietMs = 3000,
+    turnCompletionMaxWaitMs = 12000,
+    reconnectSettleQuietMs = 5000
   } = deps;
 
   async function handleNotification({ method, params }) {
@@ -36,6 +43,10 @@ export function createNotificationRuntime(deps) {
       const tracker = activeTurns.get(threadId);
       if (!tracker) {
         return;
+      }
+      noteTurnActivity(tracker);
+      if (isUxFlowCutoverEnabled(tracker)) {
+        await ensureThinkingStage(tracker);
       }
       transitionTurnPhase(tracker, TURN_PHASE.RUNNING);
       debugLog("item-delta", "agent delta", {
@@ -57,10 +68,23 @@ export function createNotificationRuntime(deps) {
       if (!tracker) {
         return;
       }
+      noteTurnActivity(tracker);
       const item = normalized.item;
       const state = normalized.state;
+      updateLifecycleItemState(tracker, item, state);
+      if (isUxFlowCutoverEnabled(tracker) && isToolCallItemType(item?.type)) {
+        noteToolCallObserved(tracker);
+        await ensureWorkingStage(tracker);
+      }
+      if (isUxFlowCutoverEnabled(tracker)) {
+        await ensureThinkingStage(tracker);
+      }
       if (state === "started") {
         transitionTurnPhase(tracker, TURN_PHASE.RUNNING);
+      }
+
+      if (tracker.turnCompletionRequested) {
+        scheduleTurnFinalizeWhenSettled(threadId, tracker);
       }
       debugLog("item-event", "item lifecycle", {
         threadId,
@@ -75,7 +99,7 @@ export function createNotificationRuntime(deps) {
         recordFileChanges(tracker, item);
       }
 
-      if (shouldAnnounceStatusItem(item?.type, renderVerbosity)) {
+      if (!isUxFlowCutoverEnabled(tracker) && shouldAnnounceStatusItem(item?.type, renderVerbosity)) {
         const statusLine = recordItemStatusLine(item, state);
         if (statusLine) {
           const statusMessage = await sendStatusUpdateLine(tracker, statusLine);
@@ -96,7 +120,13 @@ export function createNotificationRuntime(deps) {
       }
 
       if (state === "completed") {
-        await maybeSendAttachmentsForItem(tracker, item);
+        if (isUxFlowCutoverEnabled(tracker)) {
+          if (item?.type === "imageView") {
+            queueAttachmentCandidatesForLater(tracker, item);
+          }
+        } else {
+          await maybeSendAttachmentsForItem(tracker, item);
+        }
       }
 
       if (state === "started") {
@@ -119,7 +149,16 @@ export function createNotificationRuntime(deps) {
       if (!threadId) {
         return;
       }
-      await finalizeTurn(threadId, null);
+      const tracker = activeTurns.get(threadId);
+      if (!tracker) {
+        return;
+      }
+      noteTurnActivity(tracker);
+      tracker.turnCompletionRequested = true;
+      if (!tracker.turnCompletionRequestedAt) {
+        tracker.turnCompletionRequestedAt = Date.now();
+      }
+      scheduleTurnFinalizeWhenSettled(threadId, tracker);
       return;
     }
 
@@ -127,9 +166,12 @@ export function createNotificationRuntime(deps) {
       const threadId = normalized.threadId;
       const message = normalized.errorMessage;
       if (threadId) {
-        const tracker = activeTurns.get(threadId);
-        if (tracker && isTransientReconnectErrorMessage(message)) {
-          markTurnReconnecting(tracker, "🔄 Temporary reconnect while processing. Continuing automatically while connection recovers...");
+      const tracker = activeTurns.get(threadId);
+      if (tracker && isTransientReconnectErrorMessage(message)) {
+          noteReconnectObserved(tracker);
+          if (!isUxFlowCutoverEnabled(tracker)) {
+            markTurnReconnecting(tracker, "🔄 Temporary reconnect while processing. Continuing automatically while connection recovers...");
+          }
           debugLog("transport", "transient reconnect while turn active", {
             threadId,
             turnId: threadId,
@@ -146,6 +188,9 @@ export function createNotificationRuntime(deps) {
   function onTurnReconnectPending(threadId, context = {}) {
     const tracker = activeTurns.get(threadId);
     if (!tracker) {
+      return;
+    }
+    if (isUxFlowCutoverEnabled(tracker)) {
       return;
     }
     const attempt = Number.isFinite(Number(context.attempt)) ? Number(context.attempt) : 1;
@@ -189,6 +234,8 @@ export function createNotificationRuntime(deps) {
       return;
     }
     tracker.finalizing = true;
+    clearTurnFinalizeTimer(tracker);
+    tracker.turnCompletionRequested = false;
 
     if (tracker.flushTimer) {
       clearTimeout(tracker.flushTimer);
@@ -196,6 +243,7 @@ export function createNotificationRuntime(deps) {
     }
 
     try {
+      clearThinkingTicker(tracker);
       if (error) {
         tracker.failed = true;
         tracker.completed = true;
@@ -209,36 +257,223 @@ export function createNotificationRuntime(deps) {
         } else {
           pushStatusLine(tracker, `❌ Error: ${truncateStatusText(error.message, 220)}`);
         }
-        await flushTrackerParagraphs(tracker, { force: true });
+        if (isUxFlowCutoverEnabled(tracker)) {
+          await safeSendToChannel(tracker.channel, `❌ Error: ${truncateStatusText(error.message, 220)}`);
+        } else {
+          await flushTrackerParagraphs(tracker, { force: true });
+        }
         tracker.reject(error);
         return;
       }
 
       tracker.completed = true;
       transitionTurnPhase(tracker, TURN_PHASE.DONE);
-      pushStatusLine(tracker, "👍 Tool calling done");
-      await flushTrackerParagraphs(tracker, { force: true });
+      if (isUxFlowCutoverEnabled(tracker)) {
+        await finalizeUxFlowStages(tracker);
+      } else {
+        pushStatusLine(tracker, "👍 Tool calling done");
+        await flushTrackerParagraphs(tracker, { force: true });
+      }
 
       tracker.fullText = normalizeFinalSummaryText(tracker.fullText);
+      const summaryTextForDiscord = sanitizeSummaryForDiscord(tracker.fullText);
       const diffBlock = buildFileDiffSection(tracker);
-      const renderPlan = buildTurnRenderPlan({
-        summaryText: tracker.fullText,
-        diffBlock,
-        verbosity: renderVerbosity
+      const pendingAttachmentPaths = tracker.pendingAttachmentPaths ? [...tracker.pendingAttachmentPaths] : [];
+      const attachmentHintText =
+        pendingAttachmentPaths.length > 0
+          ? `${tracker.fullText}\n${pendingAttachmentPaths.join("\n")}`
+          : tracker.fullText;
+      const inferredSummaryPaths = collectLikelyLocalPathsFromText(attachmentHintText);
+      debugLog("summary", "prepared summary text", {
+        threadId: tracker.threadId,
+        turnId: tracker.threadId,
+        discordMessageId: tracker.statusMessageId ?? null,
+        rawLength: tracker.fullText.length,
+        sanitizedLength: summaryTextForDiscord.length,
+        rawPreview: summarizeForDebug(tracker.fullText, 180),
+        sanitizedPreview: summarizeForDebug(summaryTextForDiscord, 180),
+        inferredSummaryPathCount: inferredSummaryPaths.length,
+        inferredSummaryPaths: inferredSummaryPaths.slice(0, 8)
       });
-      if (renderPlan.primaryMessage) {
-        await sendChunkedToChannel(tracker.channel, renderPlan.primaryMessage);
-      }
-      for (const statusMessage of renderPlan.statusMessages) {
-        await sendChunkedToChannel(tracker.channel, statusMessage);
+      if (isUxFlowCutoverEnabled(tracker)) {
+        if (summaryTextForDiscord) {
+          await sendChunkedToChannel(tracker.channel, summaryTextForDiscord);
+        }
+        const sentImages = await maybeSendInferredAttachmentsFromText(tracker, attachmentHintText);
+        tracker.hasSummaryImageAttachment = Number(sentImages) > 0;
+        debugLog("attachments", "inferred attachment send complete", {
+          threadId: tracker.threadId,
+          turnId: tracker.threadId,
+          discordMessageId: tracker.statusMessageId ?? null,
+          inferredSentCount: Number(sentImages) || 0,
+          telemetry: tracker.attachmentTelemetry ?? null
+        });
+        if (diffBlock) {
+          await sendChunkedToChannel(tracker.channel, diffBlock);
+        }
+      } else {
+        const renderPlan = buildTurnRenderPlan({
+          summaryText: tracker.fullText,
+          diffBlock,
+          verbosity: renderVerbosity
+        });
+        if (renderPlan.primaryMessage) {
+          await sendChunkedToChannel(tracker.channel, renderPlan.primaryMessage);
+        }
+        for (const statusMessage of renderPlan.statusMessages) {
+          await sendChunkedToChannel(tracker.channel, statusMessage);
+        }
       }
 
       tracker.resolve(tracker.fullText);
     } finally {
+      clearWorkingTicker(tracker);
+      clearThinkingTicker(tracker);
       activeTurns.delete(threadId);
       await onTurnFinalized?.(tracker);
       await writeHeartbeatFile();
     }
+  }
+
+  function queueAttachmentCandidatesForLater(tracker, item) {
+    if (!tracker || !item || typeof item !== "object") {
+      return;
+    }
+    if (!tracker.pendingAttachmentPaths) {
+      tracker.pendingAttachmentPaths = new Set();
+    }
+    const candidates = extractAttachmentCandidates(item, { attachmentInferFromText: true });
+    for (const candidate of candidates) {
+      const value = typeof candidate?.path === "string" ? candidate.path.trim() : "";
+      if (value) {
+        tracker.pendingAttachmentPaths.add(value);
+      }
+    }
+  }
+
+  function noteTurnActivity(tracker) {
+    if (!tracker || typeof tracker !== "object") {
+      return;
+    }
+    tracker.lastTurnActivityAt = Date.now();
+  }
+
+  function noteToolCallObserved(tracker) {
+    if (!tracker || typeof tracker !== "object") {
+      return;
+    }
+    const now = Date.now();
+    tracker.hasToolCall = true;
+    if (!Number.isFinite(tracker.firstToolCallAt) || tracker.firstToolCallAt <= 0) {
+      tracker.firstToolCallAt = now;
+      return;
+    }
+    if (now < tracker.firstToolCallAt) {
+      tracker.firstToolCallAt = now;
+    }
+  }
+
+  function noteReconnectObserved(tracker) {
+    if (!tracker || typeof tracker !== "object") {
+      return;
+    }
+    tracker.lastReconnectAt = Date.now();
+  }
+
+  function updateLifecycleItemState(tracker, item, state) {
+    if (!tracker || !item || typeof item !== "object" || typeof state !== "string") {
+      return;
+    }
+    if (!tracker.activeLifecycleItemKeys) {
+      tracker.activeLifecycleItemKeys = new Set();
+    }
+    if (!tracker.completedLifecycleItemKeys) {
+      tracker.completedLifecycleItemKeys = new Set();
+    }
+    const key = makeLifecycleItemKey(item);
+    if (!key) {
+      return;
+    }
+    if (state === "completed") {
+      tracker.completedLifecycleItemKeys.add(key);
+      tracker.activeLifecycleItemKeys.delete(key);
+      return;
+    }
+    if (state === "started") {
+      if (tracker.completedLifecycleItemKeys.has(key)) {
+        return;
+      }
+      tracker.activeLifecycleItemKeys.add(key);
+    }
+  }
+
+  function makeLifecycleItemKey(item) {
+    if (!item || typeof item !== "object") {
+      return "";
+    }
+    const type = typeof item.type === "string" ? item.type : "unknown";
+    const id = item.id !== undefined && item.id !== null ? String(item.id) : "";
+    if (id) {
+      return `${type}:${id}`;
+    }
+    return "";
+  }
+
+  function clearTurnFinalizeTimer(tracker) {
+    if (!tracker?.turnFinalizeTimer) {
+      return;
+    }
+    clearTimeout(tracker.turnFinalizeTimer);
+    tracker.turnFinalizeTimer = null;
+  }
+
+  function scheduleTurnFinalizeWhenSettled(threadId, tracker) {
+    if (!tracker || tracker.finalizing || tracker.completed) {
+      return;
+    }
+    clearTurnFinalizeTimer(tracker);
+    tracker.turnFinalizeTimer = setTimeout(() => {
+      void maybeFinalizeTurnWhenSettled(threadId);
+    }, turnCompletionQuietMs);
+    if (typeof tracker.turnFinalizeTimer?.unref === "function") {
+      tracker.turnFinalizeTimer.unref();
+    }
+  }
+
+  async function maybeFinalizeTurnWhenSettled(threadId) {
+    const tracker = activeTurns.get(threadId);
+    if (!tracker || tracker.finalizing || tracker.completed) {
+      return;
+    }
+    const now = Date.now();
+    const lastActivityAt = Number.isFinite(tracker.lastTurnActivityAt) ? tracker.lastTurnActivityAt : now;
+    const quietForMs = now - lastActivityAt;
+    const activeItemCount = tracker.activeLifecycleItemKeys?.size ?? 0;
+    const requestedAt = Number.isFinite(tracker.turnCompletionRequestedAt) ? tracker.turnCompletionRequestedAt : now;
+    const waitedMs = now - requestedAt;
+    const lastReconnectAt = Number.isFinite(tracker.lastReconnectAt) ? tracker.lastReconnectAt : 0;
+    const reconnectQuietForMs = lastReconnectAt > 0 ? now - lastReconnectAt : Infinity;
+    const reconnectSettled = reconnectQuietForMs >= reconnectSettleQuietMs;
+
+    if ((quietForMs < turnCompletionQuietMs || activeItemCount > 0 || !reconnectSettled) && waitedMs < turnCompletionMaxWaitMs) {
+      debugLog("turn", "turn completion deferred until stream settles", {
+        threadId: tracker.threadId,
+        turnId: tracker.threadId,
+        discordMessageId: tracker.statusMessageId ?? null,
+        quietForMs,
+        activeItemCount,
+        reconnectQuietForMs: Number.isFinite(reconnectQuietForMs) ? reconnectQuietForMs : null,
+        reconnectSettled,
+        waitedMs,
+        quietWindowMs: turnCompletionQuietMs,
+        reconnectQuietWindowMs: reconnectSettleQuietMs,
+        maxWaitMs: turnCompletionMaxWaitMs
+      });
+      scheduleTurnFinalizeWhenSettled(threadId, tracker);
+      return;
+    }
+
+    await finalizeTurn(threadId, null);
   }
 
   function markTurnReconnecting(tracker, line) {
@@ -248,6 +483,139 @@ export function createNotificationRuntime(deps) {
     transitionTurnPhase(tracker, TURN_PHASE.RECONNECTING);
     pushStatusLine(tracker, line);
     scheduleFlush(tracker);
+  }
+
+  async function ensureThinkingStage(tracker) {
+    if (!tracker?.channel || !tracker?.statusMessageId || tracker?.hasToolCall) {
+      clearThinkingTicker(tracker);
+      return;
+    }
+    if (!tracker.thinkingStartedAt) {
+      tracker.thinkingStartedAt = Date.now();
+    }
+    if (tracker.thinkingTicker) {
+      return;
+    }
+    const tick = async () => {
+      if (!tracker?.channel || !tracker?.statusMessageId || tracker?.hasToolCall) {
+        clearThinkingTicker(tracker);
+        return;
+      }
+      const startedAt = tracker.thinkingStartedAt || Date.now();
+      const elapsed = formatDuration(Date.now() - startedAt);
+      const payload = `⏳ Thinking... (${elapsed})`;
+      pushStatusLine(tracker, payload);
+      await editTrackerMessage(tracker, buildTrackerMessageContent(tracker));
+    };
+    void tick();
+    tracker.thinkingTicker = setInterval(() => {
+      void tick();
+    }, 3000);
+    if (typeof tracker.thinkingTicker?.unref === "function") {
+      tracker.thinkingTicker.unref();
+    }
+  }
+
+  async function ensureWorkingStage(tracker) {
+    if (!tracker?.channel || tracker?.workingMessageId) {
+      return;
+    }
+    if (tracker.workingMessageCreatePromise) {
+      await tracker.workingMessageCreatePromise;
+      return;
+    }
+    tracker.hasToolCall = true;
+    clearThinkingTicker(tracker);
+    if (!tracker.firstToolCallAt) {
+      tracker.firstToolCallAt = Date.now();
+    }
+    const createPromise = (async () => {
+      const elapsed = formatDuration(Date.now() - tracker.firstToolCallAt);
+      const message = await safeSendToChannel(tracker.channel, `👷 Working (${elapsed})`);
+      if (!message) {
+        return;
+      }
+      tracker.workingMessage = message;
+      tracker.workingMessageId = message.id;
+      startWorkingTicker(tracker);
+    })();
+    tracker.workingMessageCreatePromise = createPromise;
+    try {
+      await createPromise;
+    } finally {
+      tracker.workingMessageCreatePromise = null;
+    }
+  }
+
+  function startWorkingTicker(tracker) {
+    if (!tracker?.workingMessageId || !tracker?.channel) {
+      return;
+    }
+    clearWorkingTicker(tracker);
+    const tick = async () => {
+      if (!tracker?.workingMessageId || !tracker?.channel) {
+        return;
+      }
+      const firstToolAt = tracker.firstToolCallAt || Date.now();
+      const elapsed = formatDuration(Date.now() - firstToolAt);
+      const payload = `👷 Working (${elapsed})`;
+      try {
+        const edited = await tracker.channel.messages.edit(tracker.workingMessageId, payload);
+        if (edited) {
+          tracker.workingMessage = edited;
+        }
+        tracker.workingLastRefreshAt = Date.now();
+        debugLog("status", "working ticker refreshed", {
+          threadId: tracker.threadId,
+          turnId: tracker.threadId,
+          discordMessageId: tracker.statusMessageId ?? null,
+          workingMessageId: tracker.workingMessageId ?? null,
+          elapsed,
+          payload
+        });
+      } catch (error) {
+        debugLog("status", "working ticker update failed", {
+          threadId: tracker.threadId,
+          turnId: tracker.threadId,
+          discordMessageId: tracker.statusMessageId ?? null,
+          workingMessageId: tracker.workingMessageId ?? null,
+          error: truncateStatusText(String(error?.message ?? error ?? "unknown"), 220)
+        });
+      }
+    };
+
+    void tick();
+    tracker.workingTicker = setInterval(() => {
+      void tick();
+    }, 3000);
+    if (typeof tracker.workingTicker?.unref === "function") {
+      tracker.workingTicker.unref();
+    }
+  }
+
+  async function finalizeUxFlowStages(tracker) {
+    clearWorkingTicker(tracker);
+    if (tracker.hasToolCall && tracker.firstToolCallAt) {
+      tracker.lastToolCompletedAt = Date.now();
+      const elapsed = formatDuration(tracker.lastToolCompletedAt - tracker.firstToolCallAt);
+      await safeSendToChannel(tracker.channel, `✅ Work complete (${elapsed})`);
+    }
+  }
+
+  function clearWorkingTicker(tracker) {
+    if (!tracker?.workingTicker) {
+      return;
+    }
+    clearInterval(tracker.workingTicker);
+    tracker.workingTicker = null;
+  }
+
+  function clearThinkingTicker(tracker) {
+    if (!tracker?.thinkingTicker) {
+      return;
+    }
+    clearInterval(tracker.thinkingTicker);
+    tracker.thinkingTicker = null;
   }
 
   function appendTrackerText(tracker, text, { fromDelta }) {
@@ -415,6 +783,17 @@ export function createNotificationRuntime(deps) {
     return truncateForDiscordMessage(tracker.currentStatusLine || "⏳ Thinking...", discordMaxMessageLength);
   }
 
+  function summarizeForDebug(text, max = 180) {
+    if (typeof text !== "string" || !text) {
+      return "";
+    }
+    const normalized = text.replace(/\s+/g, " ").trim();
+    if (normalized.length <= max) {
+      return normalized;
+    }
+    return `${normalized.slice(0, Math.max(0, max - 3))}...`;
+  }
+
   async function editTrackerMessage(tracker, content) {
     if (!tracker?.channel || !content) {
       return;
@@ -480,6 +859,29 @@ export function createNotificationRuntime(deps) {
         messageId: replacement.id
       });
     }
+  }
+
+  function isUxFlowCutoverEnabled(tracker) {
+    return tracker?.uxFlowCutover === true && tracker?.allowFileWrites !== false;
+  }
+
+  function isToolCallItemType(itemType) {
+    return (
+      itemType === "toolCall" ||
+      itemType === "mcpToolCall" ||
+      itemType === "commandExecution" ||
+      itemType === "webSearch"
+    );
+  }
+
+  function formatDuration(durationMs) {
+    const totalSeconds = Math.max(0, Math.floor(Number(durationMs) / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes > 0) {
+      return `${minutes}m ${seconds}s`;
+    }
+    return `${seconds}s`;
   }
 
   return {
