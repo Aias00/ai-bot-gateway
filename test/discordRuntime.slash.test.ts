@@ -73,6 +73,7 @@ function createInteraction(commandName: string, options: Record<string, unknown>
 function createRuntime(overrides: Record<string, unknown> = {}) {
   const calls: Array<{ type: string; payload?: unknown }> = [];
   const runtime = createDiscordRuntime({
+    ChannelType,
     discord: { user: { id: "bot-1" } },
     config: {
       allowedUserIds: ["user-1"],
@@ -98,6 +99,8 @@ function createRuntime(overrides: Record<string, unknown> = {}) {
         model: "gpt-5.3-codex"
       }
     }),
+    projectsCategoryName: "codex-projects",
+    managedChannelTopicPrefix: "codex-cwd:",
     runManagedRouteCommand: async (message: { reply: (text: string) => Promise<unknown> }, options?: Record<string, unknown>) => {
       calls.push({ type: "bootstrap", payload: options ?? null });
       await message.reply("Resynced channels. discovered=3, created=1, moved=0, pruned=0, mapped=1");
@@ -174,5 +177,68 @@ describe("discord runtime slash commands", () => {
     await runtime.handleInteraction(interaction);
 
     expect(calls).toEqual([{ type: "bootstrap", payload: { forceRebuild: false } }]);
+  });
+
+  test("auto-initializes a new text channel created under the managed projects category", async () => {
+    const { runtime, calls } = createRuntime();
+    const replies: string[] = [];
+    const channel = {
+      id: "channel-2",
+      name: "repo-two",
+      type: ChannelType.GuildText,
+      topic: "",
+      parent: { name: "codex-projects" },
+      async send(content: string) {
+        replies.push(content);
+        return this;
+      }
+    };
+
+    await runtime.handleChannelCreate(channel);
+
+    expect(calls).toEqual([{ type: "initrepo", payload: "" }]);
+    expect(replies).toEqual(["initrepo "]);
+  });
+
+  test("skips auto-init for bridge-managed channels that already have a cwd topic", async () => {
+    const { runtime, calls } = createRuntime();
+    const replies: string[] = [];
+    const channel = {
+      id: "channel-2",
+      name: "repo-two",
+      type: ChannelType.GuildText,
+      topic: "codex-cwd:/tmp/repo-two",
+      parent: { name: "codex-projects" },
+      async send(content: string) {
+        replies.push(content);
+        return this;
+      }
+    };
+
+    await runtime.handleChannelCreate(channel);
+
+    expect(calls).toEqual([]);
+    expect(replies).toEqual([]);
+  });
+
+  test("does not auto-init channels outside the managed projects category", async () => {
+    const { runtime, calls } = createRuntime();
+    const replies: string[] = [];
+    const channel = {
+      id: "channel-2",
+      name: "repo-two",
+      type: ChannelType.GuildText,
+      topic: "",
+      parent: { name: "other-category" },
+      async send(content: string) {
+        replies.push(content);
+        return this;
+      }
+    };
+
+    await runtime.handleChannelCreate(channel);
+
+    expect(calls).toEqual([]);
+    expect(replies).toEqual([]);
   });
 });

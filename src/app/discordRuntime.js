@@ -1,5 +1,6 @@
 export function createDiscordRuntime(deps) {
   const {
+    ChannelType,
     discord,
     config,
     resolveRepoContext,
@@ -7,6 +8,8 @@ export function createDiscordRuntime(deps) {
     generalChannelName,
     generalChannelCwd,
     getChannelSetups,
+    projectsCategoryName,
+    managedChannelTopicPrefix,
     runManagedRouteCommand,
     shouldHandleAsSelfRestartRequest,
     requestSelfRestartFromDiscord,
@@ -107,6 +110,13 @@ export function createDiscordRuntime(deps) {
       setup: context.setup,
       repoChannelId: context.repoChannelId
     });
+  }
+
+  async function handleChannelCreate(channel) {
+    if (!shouldAutoInitRepoForChannel(channel)) {
+      return;
+    }
+    await handleInitRepoCommand(createAutoInitMessageAdapter(channel), "");
   }
 
   async function handleInteraction(interaction) {
@@ -231,11 +241,54 @@ export function createDiscordRuntime(deps) {
     return config.allowedUserIds.includes(userId);
   }
 
+  function isGeneralChannel(channel) {
+    if (!channel) {
+      return false;
+    }
+    if (generalChannelId && channel.id === generalChannelId) {
+      return true;
+    }
+    return String(channel.name ?? "").trim().toLowerCase() === String(generalChannelName ?? "").trim().toLowerCase();
+  }
+
   return {
+    handleChannelCreate,
     handleMessage,
     handleInteraction,
     registerSlashCommands
   };
+
+  function shouldAutoInitRepoForChannel(channel) {
+    if (!channel || channel.type !== ChannelType.GuildText) {
+      return false;
+    }
+    if (isGeneralChannel(channel)) {
+      return false;
+    }
+    const parentName = String(
+      channel.parent?.name ?? discord.channels?.cache?.get?.(channel.parentId ?? "")?.name ?? ""
+    )
+      .trim()
+      .toLowerCase();
+    if (!parentName || parentName !== String(projectsCategoryName ?? "").trim().toLowerCase()) {
+      return false;
+    }
+    const topic = String(channel.topic ?? "").trim();
+    if (topic.startsWith(String(managedChannelTopicPrefix ?? ""))) {
+      return false;
+    }
+    return !getChannelSetups()?.[channel.id];
+  }
+
+  function createAutoInitMessageAdapter(channel) {
+    return {
+      id: `auto-init-${channel.id}`,
+      platform: "discord",
+      channel,
+      channelId: channel.id,
+      reply: async (content) => await channel.send(content)
+    };
+  }
 }
 
 function normalizeIncomingContent(content, botUserId) {

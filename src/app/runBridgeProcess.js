@@ -33,6 +33,7 @@ export async function runBridgeProcess(context) {
     discord,
     handleNotification: runtimeAdapters.handleNotification,
     handleServerRequest: runtimeAdapters.handleServerRequest,
+    handleChannelCreate: runtimeAdapters.handleChannelCreate,
     handleMessage: runtimeAdapters.handleMessage,
     handleInteraction: runtimeAdapters.handleInteraction
   });

@@ -6,12 +6,12 @@ export async function resolveDiscordGuild(discord, options = {}) {
       return guild;
     }
 
-    const fetchedGuild = await discord.guilds.fetch(configuredGuildId).catch(() => null);
+    const fetchedGuild = await fetchGuildById(discord, configuredGuildId);
     if (fetchedGuild) {
       return fetchedGuild;
     }
 
-    const allGuilds = await discord.guilds.fetch().catch(() => new Map());
+    const allGuilds = await fetchAllGuilds(discord);
     const knownGuilds = [...allGuilds.values()].map((entry) => `${entry.name} (${entry.id})`);
     const appId = discord.application?.id;
     throw new Error(
@@ -32,10 +32,24 @@ export async function resolveDiscordGuild(discord, options = {}) {
     return guilds[0];
   }
 
-  const fetched = await discord.guilds.fetch().catch(() => new Map());
+  const fetched = await fetchAllGuilds(discord);
   if (fetched.size === 1) {
     return [...fetched.values()][0];
   }
 
   throw new Error("Set DISCORD_GUILD_ID (bot is in multiple guilds).");
+}
+
+async function fetchGuildById(discord, guildId) {
+  if (typeof discord?.guilds?.fetch !== "function") {
+    return null;
+  }
+  return await discord.guilds.fetch(guildId).catch(() => null);
+}
+
+async function fetchAllGuilds(discord) {
+  if (typeof discord?.guilds?.fetch !== "function") {
+    return discord?.guilds?.cache instanceof Map ? discord.guilds.cache : new Map();
+  }
+  return await discord.guilds.fetch().catch(() => new Map());
 }

@@ -257,6 +257,7 @@ curl -i http://127.0.0.1:8788/readyz
 - Image attachments are forwarded into Codex turns.
 - `#general` stays read-only even if the bridge can write inside repo channels.
 - `!initrepo` creates and binds a repo under `DISCORD_REPO_ROOT`.
+- Creating a new text channel under the managed `codex-projects` category auto-runs the same repo bootstrap flow as `!initrepo` without `force`.
 
 ### Feishu
 
@@ -265,7 +266,7 @@ curl -i http://127.0.0.1:8788/readyz
 - Commands use leading slash text such as `/status`, `/ask`, `/approve`.
 - `/setpath /absolute/path` rebinds the current chat to an existing repo path and clears the old Codex thread binding.
 - In group chats, plain prompts require `@bot` when `FEISHU_REQUIRE_MENTION_IN_GROUP=1`.
-- Feishu is currently text-only. Incoming image attachments are not bridged.
+- Feishu plain text and image messages in mapped chats are bridged into Codex turns.
 - `!initrepo` is not supported on Feishu. Chat bindings stay config-driven.
 - `/where` works even before a chat is bound and returns `chat_id`, `route_id`, and `sender_open_id` for setup.
 - `FEISHU_TRANSPORT=long-connection` skips callback URLs and receives events over WebSocket instead.
@@ -559,7 +560,7 @@ This is the shortest reliable way to bring Feishu online with the current bridge
 - Feishu chats can also be rebound in-place with `/setpath /absolute/path`, which updates `config/channels.json`.
 - `FEISHU_GENERAL_CHAT_ID` creates one read-only general chat, similar to Discord `#general`.
 - If `FEISHU_REQUIRE_MENTION_IN_GROUP=1`, plain prompts in group chats need an `@mention`; slash-style commands such as `/status` still work.
-- Feishu is currently text-only in this bridge. Image input/output bridging is not implemented.
+- Feishu now supports inbound image messages and outbound image uploads. Non-image outbound attachments still fall back to text notices.
 - In long-connection mode, Feishu delivers events to one connected client instance for the app instead of broadcasting to every instance.
 - `POST /feishu/events` only needs to stay reachable in webhook mode.
 
@@ -665,7 +666,7 @@ If you run `npm link` once in this repo, the same commands are also available as
 ## Current Limitations
 
 - Feishu chat containers are not auto-created; you still need one chat per repo if you want the Discord-style "one workspace per conversation" model
-- Feishu currently accepts text messages only; no attachment/image bridging and no button approvals
+- Feishu supports text plus inbound image messages, and can upload outbound image attachments, but still has no button approvals or general non-image attachment upload flow yet
 - Discord auto-discovery depends on Codex threads having usable `cwd` values
 - Dynamic tool-call requests are not implemented beyond fallback denial
 - Native slash commands exist only on Discord; Feishu uses text `/command` messages

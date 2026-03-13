@@ -52,6 +52,10 @@ export function createRuntimeAdapters(deps) {
     await getDiscordRuntime?.()?.handleInteraction(interaction);
   }
 
+  async function handleChannelCreate(channel) {
+    await getDiscordRuntime?.()?.handleChannelCreate(channel);
+  }
+
   function collectImageAttachments(message) {
     return attachmentInputBuilder.collectImageAttachments(message);
   }
@@ -150,6 +154,7 @@ export function createRuntimeAdapters(deps) {
     shouldHandleAsSelfRestartRequest,
     handleMessage,
     handleInteraction,
+    handleChannelCreate,
     collectImageAttachments,
     buildTurnInputFromMessage,
     enqueuePrompt,

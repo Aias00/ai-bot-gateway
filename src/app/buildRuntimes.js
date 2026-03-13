@@ -110,6 +110,7 @@ export function buildBridgeRuntimes(deps) {
   });
 
   const discordRuntime = buildDiscordRuntime({
+    ChannelType,
     MessageFlags,
     discord,
     config,
@@ -117,6 +118,8 @@ export function buildBridgeRuntimes(deps) {
     generalChannelName,
     generalChannelCwd,
     getChannelSetups,
+    projectsCategoryName,
+    managedChannelTopicPrefix,
     bootstrapChannelMappings,
     runManagedRouteCommand,
     runtimeAdapters,
@@ -141,6 +144,7 @@ export function buildBridgeRuntimes(deps) {
       feishuPort: deps.feishuPort,
       feishuHost: deps.feishuHost,
       feishuWebhookPath: deps.feishuWebhookPath,
+      imageCacheDir: deps.imageCacheDir,
       feishuGeneralChatId: deps.feishuGeneralChatId,
       feishuGeneralCwd: deps.feishuGeneralCwd,
       feishuRequireMentionInGroup: deps.feishuRequireMentionInGroup

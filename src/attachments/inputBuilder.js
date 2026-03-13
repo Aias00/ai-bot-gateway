@@ -46,6 +46,11 @@ export function createAttachmentInputBuilder(deps) {
   }
 
   async function downloadImageAttachment(attachment, messageId, ordinal) {
+    const localPath = resolveLocalImagePath(attachment);
+    if (localPath) {
+      return { type: "localImage", path: localPath };
+    }
+
     const sourceUrls = [attachment?.proxyURL, attachment?.url]
       .filter((value) => typeof value === "string" && value.trim().length > 0)
       .map((value) => value.trim());
@@ -133,6 +138,14 @@ export function createAttachmentInputBuilder(deps) {
       "image/svg+xml": ".svg"
     };
     return known[contentType] ?? ".png";
+  }
+
+  function resolveLocalImagePath(attachment) {
+    if (!attachment || typeof attachment !== "object") {
+      return "";
+    }
+    const localPath = typeof attachment.path === "string" ? attachment.path.trim() : "";
+    return localPath ? path.resolve(localPath) : "";
   }
 
   return {

@@ -96,6 +96,7 @@ export async function buildRuntimeGraph(deps) {
     getTurnRunner: () => refs.turnRunner,
     getNotificationRuntime: () => refs.notificationRuntime,
     getServerRequestRuntime: () => refs.serverRequestRuntime,
+    getDiscordRuntime: () => refs.discordRuntime,
     getPlatformRegistry: () => refs.platformRegistry,
     getRuntimeOps: () => refs.runtimeOps,
     maybeSendAttachmentsForItemFromService,

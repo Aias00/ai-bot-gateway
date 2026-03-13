@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { createFeishuRuntime } from "../src/feishu/runtime.js";
 import { makeFeishuRouteId } from "../src/feishu/ids.js";
 
@@ -432,5 +435,178 @@ describe("feishu runtime", () => {
         }
       }
     ]);
+  });
+
+  test("queues image prompts for mapped chats by downloading the Feishu resource into a local image input", async () => {
+    const jobs: Array<{ repoChannelId: string; imagePaths: string[] }> = [];
+    const routeId = makeFeishuRouteId("oc_repo_image_1");
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-image-test-"));
+
+    globalThis.fetch = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/tenant_access_token/internal")) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: "tenant-token", expire: 7200 }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.includes("/open-apis/im/v1/messages/om_in_image_1/resources/img_resource_1?type=image")) {
+        return new Response(new Uint8Array([1, 2, 3, 4]), {
+          status: 200,
+          headers: { "content-type": "image/png" }
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    };
+
+    const runtime = createFeishuRuntime({
+      config: {
+        defaultModel: "gpt-5.3-codex",
+        sandboxMode: "workspace-write",
+        allowedFeishuUserIds: []
+      },
+      runtimeEnv: {
+        feishuEnabled: true,
+        feishuAppId: "cli_test",
+        feishuAppSecret: "secret",
+        feishuVerificationToken: "",
+        feishuTransport: "long-connection",
+        feishuPort: 8788,
+        feishuHost: "127.0.0.1",
+        feishuWebhookPath: "/feishu/events",
+        imageCacheDir: tempDir,
+        feishuGeneralChatId: "",
+        feishuGeneralCwd: "/tmp/general",
+        feishuRequireMentionInGroup: false
+      },
+      getChannelSetups: () => ({
+        [routeId]: {
+          cwd: "/tmp/repo-image",
+          model: "gpt-5.3-codex"
+        }
+      }),
+      runManagedRouteCommand: async () => {},
+      getHelpText: () => "help text",
+      isCommandSupportedForPlatform: () => false,
+      handleCommand: async () => {},
+      runtimeAdapters: {
+        buildTurnInputFromMessage: async (_message: unknown, text: string, imageAttachments: Array<{ path: string }>) => [
+          { type: "text", text },
+          ...imageAttachments.map((attachment) => ({ type: "localImage", path: attachment.path }))
+        ].filter((item) => item.type !== "text" || item.text),
+        enqueuePrompt: (repoChannelId: string, job: { inputItems: Array<{ path?: string }> }) => {
+          jobs.push({
+            repoChannelId,
+            imagePaths: job.inputItems.map((item) => item.path).filter(Boolean) as string[]
+          });
+        }
+      },
+      safeReply: async () => null
+    });
+
+    await runtime.handleEventPayload({
+      header: {
+        event_id: "evt-image-1",
+        event_type: "im.message.receive_v1"
+      },
+      event: {
+        sender: {
+          sender_id: { open_id: "ou_user_image_1" },
+          sender_type: "user"
+        },
+        message: {
+          message_id: "om_in_image_1",
+          chat_id: "oc_repo_image_1",
+          chat_type: "p2p",
+          message_type: "image",
+          content: JSON.stringify({ image_key: "img_resource_1" }),
+          mentions: []
+        }
+      }
+    });
+
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.repoChannelId).toBe(routeId);
+    expect(jobs[0]?.imagePaths).toHaveLength(1);
+    const imagePath = jobs[0]?.imagePaths[0] ?? "";
+    expect(imagePath.startsWith(tempDir)).toBe(true);
+    expect(await fs.readFile(imagePath)).toEqual(Buffer.from([1, 2, 3, 4]));
+  });
+
+  test("uploads outbound image attachments for Feishu channels", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-outbound-image-"));
+    const imagePath = path.join(tempDir, "rendered.png");
+    await fs.writeFile(imagePath, Buffer.from([5, 6, 7, 8]));
+
+    const sentBodies: Array<{ msgType?: string; content?: string }> = [];
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/tenant_access_token/internal")) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: "tenant-token", expire: 7200 }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.endsWith("/open-apis/im/v1/images")) {
+        return new Response(JSON.stringify({ code: 0, data: { image_key: "img_uploaded_1" } }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.includes("/open-apis/im/v1/messages?receive_id_type=chat_id")) {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        sentBodies.push({ msgType: body.msg_type, content: body.content });
+        return new Response(JSON.stringify({ code: 0, data: { message_id: `om_out_${sentBodies.length}` } }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    };
+
+    const runtime = createFeishuRuntime({
+      config: {
+        defaultModel: "gpt-5.3-codex",
+        sandboxMode: "workspace-write",
+        allowedFeishuUserIds: []
+      },
+      runtimeEnv: {
+        feishuEnabled: true,
+        feishuAppId: "cli_test",
+        feishuAppSecret: "secret",
+        feishuVerificationToken: "",
+        feishuTransport: "long-connection",
+        feishuPort: 8788,
+        feishuHost: "127.0.0.1",
+        feishuWebhookPath: "/feishu/events",
+        imageCacheDir: tempDir,
+        feishuGeneralChatId: "",
+        feishuGeneralCwd: "/tmp/general",
+        feishuRequireMentionInGroup: false
+      },
+      getChannelSetups: () => ({}),
+      runManagedRouteCommand: async () => {},
+      getHelpText: () => "help text",
+      isCommandSupportedForPlatform: () => false,
+      handleCommand: async () => {},
+      runtimeAdapters: {
+        buildTurnInputFromMessage: async () => [],
+        enqueuePrompt: () => {}
+      },
+      safeReply: async () => null
+    });
+
+    const channel = await runtime.fetchChannelByRouteId("feishu:oc_outbound_1");
+    expect(channel).toBeTruthy();
+    await channel.send({
+      content: "Attachment (image view): `rendered.png`",
+      files: [{ attachment: imagePath, name: "rendered.png" }]
+    });
+
+    expect(sentBodies).toHaveLength(2);
+    expect(sentBodies[0]?.msgType).toBe("text");
+    expect(sentBodies[0]?.content).toContain("rendered.png");
+    expect(sentBodies[1]?.msgType).toBe("image");
+    expect(sentBodies[1]?.content).toContain("img_uploaded_1");
   });
 });

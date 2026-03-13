@@ -5,6 +5,7 @@ import { createDiscordRuntime } from "./discordRuntime.js";
 
 export function buildDiscordRuntime(deps) {
   const {
+    ChannelType,
     MessageFlags,
     discord,
     config,
@@ -12,6 +13,8 @@ export function buildDiscordRuntime(deps) {
     generalChannelName,
     generalChannelCwd,
     getChannelSetups,
+    projectsCategoryName,
+    managedChannelTopicPrefix,
     runManagedRouteCommand,
     runtimeAdapters,
     getHelpText,
@@ -25,6 +28,7 @@ export function buildDiscordRuntime(deps) {
   } = deps;
 
   return createDiscordRuntime({
+    ChannelType,
     discord,
     config,
     resolveRepoContext,
@@ -32,6 +36,8 @@ export function buildDiscordRuntime(deps) {
     generalChannelName,
     generalChannelCwd,
     getChannelSetups,
+    projectsCategoryName,
+    managedChannelTopicPrefix,
     runManagedRouteCommand,
     shouldHandleAsSelfRestartRequest: runtimeAdapters.shouldHandleAsSelfRestartRequest,
     requestSelfRestartFromDiscord: runtimeAdapters.requestSelfRestartFromDiscord,

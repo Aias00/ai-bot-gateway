@@ -5,6 +5,7 @@ export function wireBridgeListeners({
   discord,
   handleNotification,
   handleServerRequest,
+  handleChannelCreate,
   handleMessage,
   handleInteraction
 }) {
@@ -34,6 +35,11 @@ export function wireBridgeListeners({
   discord.on("messageCreate", (message) => {
     void handleMessage(message).catch((error) => {
       console.error(`message handler failed in channel ${message.channelId}: ${error.message}`);
+    });
+  });
+  discord.on("channelCreate", (channel) => {
+    void handleChannelCreate(channel).catch((error) => {
+      console.error(`channelCreate handler failed for ${channel?.id ?? "unknown"}: ${error.message}`);
     });
   });
   discord.on("interactionCreate", (interaction) => {
