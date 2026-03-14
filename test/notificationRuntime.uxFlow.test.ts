@@ -588,7 +588,7 @@ describe("notification runtime ux flow cutover", () => {
       isTransientReconnectErrorMessage: () => false,
       safeSendToChannel: async (_channel: unknown, text: string) => {
         streamedMessages.push(text);
-        return null;
+        return { id: `feishu-stream-${streamedMessages.length}` };
       },
       truncateForDiscordMessage: (text: string) => text,
       discordMaxMessageLength: 1900,
@@ -652,7 +652,7 @@ describe("notification runtime ux flow cutover", () => {
       isTransientReconnectErrorMessage: () => false,
       safeSendToChannel: async (_channel: unknown, text: string) => {
         streamedMessages.push(text);
-        return null;
+        return { id: `feishu-stream-${streamedMessages.length}` };
       },
       truncateForDiscordMessage: (text: string) => text,
       discordMaxMessageLength: 1900,
@@ -681,6 +681,77 @@ describe("notification runtime ux flow cutover", () => {
 
     expect(streamedMessages).toEqual(["Feishu prefix."]);
     expect(chunkedMessages).toEqual([" tail"]);
+  });
+
+  test("retries Feishu summary content on finalize when a streamed segment send is dropped", async () => {
+    const activeTurns = new Map<string, TurnTracker>();
+    const tracker = createTracker({ platform: "feishu" });
+    tracker.lastFlushAt = Date.now() - 5000;
+    activeTurns.set("thread-1", tracker);
+    const streamedMessages: string[] = [];
+    const chunkedMessages: string[] = [];
+
+    const runtime = createNotificationRuntime({
+      activeTurns,
+      renderVerbosity: "user",
+      TURN_PHASE: {
+        RUNNING: "running",
+        RECONNECTING: "reconnecting",
+        FINALIZING: "finalizing",
+        FAILED: "failed",
+        DONE: "done"
+      },
+      transitionTurnPhase: () => true,
+      normalizeCodexNotification: (notification: CodexNotification) => {
+        const { method, params } = notification;
+        if (method === "item/agentMessage/delta") {
+          return { kind: "agent_delta", threadId: params.threadId, delta: params.delta };
+        }
+        if (method === "turn/completed") {
+          return { kind: "turn_completed", threadId: params.threadId };
+        }
+        return { kind: "unknown" };
+      },
+      extractAgentMessageText: () => "",
+      maybeSendAttachmentsForItem: async () => {},
+      maybeSendInferredAttachmentsFromText: async () => 0,
+      recordFileChanges: () => {},
+      summarizeItemForStatus: () => [],
+      extractWebSearchDetails: () => [],
+      buildFileDiffSection: () => "",
+      buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
+      sendChunkedToChannel: async (_channel: unknown, text: string) => {
+        chunkedMessages.push(text);
+      },
+      normalizeFinalSummaryText: (text: string) => text,
+      truncateStatusText: (text: string) => text,
+      isTransientReconnectErrorMessage: () => false,
+      safeSendToChannel: async (_channel: unknown, text: string) => {
+        streamedMessages.push(text);
+        return null;
+      },
+      truncateForDiscordMessage: (text: string) => text,
+      discordMaxMessageLength: 1900,
+      debugLog: () => {},
+      writeHeartbeatFile: async () => {},
+      onTurnFinalized: async () => {},
+      turnCompletionQuietMs: 5,
+      turnCompletionMaxWaitMs: 100
+    });
+
+    await runtime.handleNotification({
+      method: "item/agentMessage/delta",
+      params: { threadId: "thread-1", delta: "Feishu dropped segment." }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await runtime.handleNotification({
+      method: "turn/completed",
+      params: { threadId: "thread-1" }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(streamedMessages).toEqual(["Feishu dropped segment."]);
+    expect(chunkedMessages).toEqual(["Feishu dropped segment."]);
   });
 
   test("stops thinking timer once tool work begins", async () => {

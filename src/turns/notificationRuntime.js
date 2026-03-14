@@ -676,11 +676,22 @@ export function createNotificationRuntime(deps) {
 
     for (const chunk of readyChunks) {
       const payload = String(chunk ?? "");
-      tracker.streamedTextOffset += payload.length;
       if (!payload.trim()) {
+        tracker.streamedTextOffset += payload.length;
+        tracker.streamedSummaryText += payload;
         continue;
       }
-      await safeSendToChannel(tracker.channel, payload);
+      const sentMessage = await safeSendToChannel(tracker.channel, payload);
+      if (!sentMessage) {
+        debugLog("render", "feishu stream segment deferred", {
+          threadId: tracker.threadId,
+          turnId: tracker.threadId,
+          segmentLength: payload.length,
+          streamedTextOffset: tracker.streamedTextOffset
+        });
+        break;
+      }
+      tracker.streamedTextOffset += payload.length;
       tracker.streamedSummaryText += payload;
       debugLog("render", "sent feishu stream segment", {
         threadId: tracker.threadId,
