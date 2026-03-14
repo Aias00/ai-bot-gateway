@@ -1,6 +1,7 @@
 import { resolveRepoContext } from "../channels/context.js";
 import { buildCommandTextFromInteraction, syncSlashCommands } from "../commands/slashCommands.js";
 import { parseApprovalButtonCustomId } from "../codex/approvalPayloads.js";
+import { buildTurnRequestId } from "../turns/requestId.js";
 import { createDiscordRuntime } from "./discordRuntime.js";
 
 export function buildDiscordRuntime(deps) {
@@ -43,6 +44,7 @@ export function buildDiscordRuntime(deps) {
     requestSelfRestartFromDiscord: runtimeAdapters.requestSelfRestartFromDiscord,
     collectImageAttachments: runtimeAdapters.collectImageAttachments,
     buildTurnInputFromMessage: runtimeAdapters.buildTurnInputFromMessage,
+    buildTurnRequestId,
     enqueuePrompt: runtimeAdapters.enqueuePrompt,
     getHelpText,
     isCommandSupportedForPlatform,

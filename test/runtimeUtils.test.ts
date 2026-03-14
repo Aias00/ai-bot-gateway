@@ -51,6 +51,11 @@ describe("runtime utils", () => {
       isMissingRolloutPathError("state db missing rollout path FOR thread abcdef")
     ).toBe(true);
     expect(
+      isMissingRolloutPathError(
+        "\u001b[2m2026-03-13T04:50:24.506299Z\u001b[0m \u001b[31mERROR\u001b[0m state db missing rollout path for thread ansi-thread"
+      )
+    ).toBe(true);
+    expect(
       isMissingRolloutPathError("some other error not about rollout path")
     ).toBe(false);
     expect(isMissingRolloutPathError("")).toBe(false);

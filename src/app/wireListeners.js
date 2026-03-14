@@ -1,5 +1,14 @@
 import { isBenignCodexStderrLine, isMissingRolloutPathError } from "./runtimeUtils.js";
 
+function runDetached(label, action) {
+  void Promise.resolve()
+    .then(action)
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : String(error ?? "unknown");
+      console.error(`${label}: ${message}`);
+    });
+}
+
 export function wireBridgeListeners({
   codex,
   discord,
@@ -21,10 +30,10 @@ export function wireBridgeListeners({
     console.error(`[codex] ${line}`);
   });
   codex.on("notification", (event) => {
-    void handleNotification(event);
+    runDetached(`notification handler failed for ${event?.method ?? "unknown"}`, () => handleNotification(event));
   });
   codex.on("serverRequest", (request) => {
-    void handleServerRequest(request);
+    runDetached(`serverRequest handler failed for ${request?.method ?? "unknown"}`, () => handleServerRequest(request));
   });
   codex.on("exit", ({ code, signal }) => {
     console.error(`codex app-server exited (code=${code}, signal=${signal ?? "none"})`);
@@ -38,18 +47,12 @@ export function wireBridgeListeners({
   });
 
   discord.on("messageCreate", (message) => {
-    void handleMessage(message).catch((error) => {
-      console.error(`message handler failed in channel ${message.channelId}: ${error.message}`);
-    });
+    runDetached(`message handler failed in channel ${message.channelId}`, () => handleMessage(message));
   });
   discord.on("channelCreate", (channel) => {
-    void handleChannelCreate(channel).catch((error) => {
-      console.error(`channelCreate handler failed for ${channel?.id ?? "unknown"}: ${error.message}`);
-    });
+    runDetached(`channelCreate handler failed for ${channel?.id ?? "unknown"}`, () => handleChannelCreate(channel));
   });
   discord.on("interactionCreate", (interaction) => {
-    void handleInteraction(interaction).catch((error) => {
-      console.error(`interaction handler failed: ${error.message}`);
-    });
+    runDetached("interaction handler failed", () => handleInteraction(interaction));
   });
 }

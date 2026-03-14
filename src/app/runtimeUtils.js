@@ -68,7 +68,8 @@ export function isBenignCodexStderrLine(line) {
 }
 
 export function isMissingRolloutPathError(line) {
-  const normalized = String(line ?? "").toLowerCase();
+  // codex stderr 可能带 ANSI 颜色码，先归一化再匹配，避免误判漏报。
+  const normalized = stripAnsi(String(line ?? "")).toLowerCase();
   return normalized.includes("state db missing rollout path for thread");
 }
 

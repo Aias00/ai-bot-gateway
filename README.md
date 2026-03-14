@@ -279,7 +279,7 @@ curl -i http://127.0.0.1:8788/readyz
 | Ask | `!ask <prompt>` | `/ask prompt:<text>` | `/ask <prompt>` | Repo channel or mapped chat |
 | Status | `!status` | `/status` | `/status` | Queue depth, thread, sandbox, mode |
 | New thread | `!new` | `/new` | `/new` | Clears current Codex thread binding |
-| Restart | `!restart [reason]` | `/restart` | `/restart [reason]` | Requires supervisor/service to act on restart file |
+| Restart | `!restart [reason]` | `/restart` | `/restart [reason]` | Works with supervisor/service; on launchd-only installs the bridge now self-exits and launchd restarts it |
 | Interrupt | `!interrupt` | `/interrupt` | `/interrupt` | Interrupts current turn |
 | Where | `!where` | `/where` | `/where` | Shows cwd, state path, thread binding; on Feishu it also helps discover identifiers before binding |
 | Set path | `!setpath <abs-path>` | `/setpath path:<abs-path>` | `/setpath <abs-path>` | Rebinds the current chat to an existing repo path and clears the current Codex thread binding |
@@ -322,6 +322,8 @@ Use `.env.example` as the exhaustive reference. The most important variables are
 | `FEISHU_ALLOWED_OPEN_IDS` | Optional comma-separated Feishu allowlist |
 | `FEISHU_GENERAL_CHAT_ID` | Optional read-only Feishu general chat |
 | `FEISHU_REQUIRE_MENTION_IN_GROUP` | Require mention for plain prompts in group chats |
+| `FEISHU_UNBOUND_CHAT_MODE` | `strict` (default) blocks unbound chats; `open` allows all chats |
+| `FEISHU_UNBOUND_CHAT_CWD` | Working directory used when `FEISHU_UNBOUND_CHAT_MODE=open` |
 | `BACKEND_HTTP_ENABLED` | Forces backend HTTP server on; enabled automatically when Feishu is configured |
 | `BACKEND_HTTP_HOST` | Optional backend bind address, default `0.0.0.0` |
 | `BACKEND_HTTP_PORT` | Optional backend bind port, default `8788` |
@@ -331,6 +333,7 @@ Use `.env.example` as the exhaustive reference. The most important variables are
 | `CODEX_APPROVAL_POLICY` | `untrusted`, `on-failure`, `on-request`, or `never` |
 | `CODEX_SANDBOX_MODE` | `read-only`, `workspace-write`, or `danger-full-access` |
 | `CODEX_EXTRA_WRITABLE_ROOTS` | Extra writable roots for worktrees or tool state |
+| `DISCORD_STRIP_ANSI_OUTPUT` | `1` strips ANSI escape sequences from outbound Discord text |
 | `CHANNEL_CONFIG_PATH` | `config/channels.json` override |
 | `STATE_PATH` | Thread-binding state file path |
 | `DISCORD_HEARTBEAT_PATH` | Heartbeat JSON file path |
@@ -395,7 +398,7 @@ Env precedence:
 | `data/restart-request.json` | Requested restarts from chat/CLI |
 | `data/restart-ack.json` | Supervisor acknowledgement of a restart request |
 | `data/restart-discord-notice.json` | Deferred restart notice bookkeeping |
-| `data/inflight-turns.json` | Recovery metadata for active turns across restarts |
+| `data/inflight-turns.json` | Recovery metadata for active turns across restarts, plus recent `request_id` status snapshots |
 
 Practical distinction:
 
@@ -409,7 +412,17 @@ Endpoints:
 - `GET /` returns a small service descriptor and enabled endpoint list
 - `GET /healthz` returns liveness, queue counts, approval counts, and mapped-channel count
 - `GET /readyz` returns `200` only after Codex and configured chat runtimes finish startup
+- `GET /turns/:request_id` returns the latest known lifecycle status for a turn request (`processing`, `done`, `failed`, `cancelled`, or recovery states)
+- `GET /turns/by-source/:source_message_id` returns the latest request status by source message id (for historical message compatibility)
+- `POST /turns/:request_id/retry` retries a failed/cancelled request when source message + route setup are still available
 - `POST /feishu/events` handles Feishu event callbacks when `FEISHU_TRANSPORT=webhook`
+
+For channel-scoped safety, you can pass `route_id` + `platform` (or platform-specific ids such as `discord_channel_id` / `feishu_chat_id`) in query params or headers. Legacy records that predate scope metadata still resolve in compatibility mode.
+
+Current retry notes:
+
+- Retry is channel-scoped and only allowed for `failed`, `cancelled`, and `recovery_unavailable` states.
+- Automatic retry depends on message fetch + route setup availability; otherwise the endpoint returns `409` with guidance to retry manually in chat.
 
 Typical bind config:
 
@@ -559,6 +572,7 @@ This is the shortest reliable way to bring Feishu online with the current bridge
 - Feishu chats are config-driven. They are not auto-created and not auto-discovered from Codex.
 - Feishu chats can also be rebound in-place with `/setpath /absolute/path`, which updates `config/channels.json`.
 - `FEISHU_GENERAL_CHAT_ID` creates one read-only general chat, similar to Discord `#general`.
+- `FEISHU_UNBOUND_CHAT_MODE=open` allows prompts from any Feishu chat without a `config/channels.json` route mapping; those chats run with `FEISHU_UNBOUND_CHAT_CWD` as cwd.
 - If `FEISHU_REQUIRE_MENTION_IN_GROUP=1`, plain prompts in group chats need an `@mention`; slash-style commands such as `/status` still work.
 - Feishu now supports inbound image messages and outbound image uploads. Non-image outbound attachments still fall back to text notices.
 - In long-connection mode, Feishu delivers events to one connected client instance for the app instead of broadcasting to every instance.
@@ -637,6 +651,15 @@ bun run test:stability
 If you run `npm link` once in this repo, the same commands are also available as `dc-bridge ...`.
 
 `start` and `stop` manage the macOS `launchd` service. They do not control Linux `systemd`.
+
+`restart`/`reload` writes `data/restart-request.json`. With external supervisor it is consumed by the supervisor; with launchd-only installs the bridge can self-handle it and exit so launchd restarts it.
+
+By default, `DISCORD_SELF_RESTART_ON_REQUEST` auto-adjusts to restart mode:
+
+- `DISCORD_EXIT_ON_RESTART_ACK=1` (host-managed supervisor): self-handling defaults to off
+- `DISCORD_EXIT_ON_RESTART_ACK=0` (launchd-only): self-handling defaults to on
+
+You can still force either behavior explicitly with `DISCORD_SELF_RESTART_ON_REQUEST=0|1`.
 
 ## Health, State, and Logs
 

@@ -1,6 +1,5 @@
 import { describe, expect, test, mock } from "bun:test";
 import { wireBridgeListeners } from "../src/app/wireListeners.js";
-import { isBenignCodexStderrLine, isMissingRolloutPathError } from "../src/app/runtimeUtils.js";
 
 describe("wire listeners", () => {
   test("wireBridgeListeners filters rollout path errors from stderr", async () => {
@@ -73,6 +72,50 @@ describe("wire listeners", () => {
     } finally {
       console.error = originalConsoleError;
       console.warn = originalConsoleWarn;
+    }
+  });
+
+  test("adds catch handlers for notification and serverRequest listeners", async () => {
+    const codexHandlers = new Map<string, (payload: unknown) => void>();
+    const mockCodex = {
+      on: mock((event: string, handler: (payload: unknown) => void) => {
+        codexHandlers.set(event, handler);
+      })
+    };
+    const mockDiscord = {
+      on: mock(() => {})
+    };
+    const originalConsoleError = console.error;
+    const errorLog: string[] = [];
+    console.error = (...args) => {
+      errorLog.push(args.join(" "));
+    };
+
+    try {
+      wireBridgeListeners({
+        codex: mockCodex,
+        discord: mockDiscord,
+        handleNotification: async () => {
+          throw new Error("notification boom");
+        },
+        handleServerRequest: async () => {
+          throw new Error("server request boom");
+        },
+        handleChannelCreate: mock(() => {}),
+        handleMessage: mock(() => {}),
+        handleInteraction: mock(() => {})
+      });
+
+      codexHandlers.get("notification")?.({ method: "turn/completed" });
+      codexHandlers.get("serverRequest")?.({ method: "item/fileChange/requestApproval" });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(errorLog.some((line) => line.includes("notification handler failed for turn/completed: notification boom"))).toBe(true);
+      expect(
+        errorLog.some((line) => line.includes("serverRequest handler failed for item/fileChange/requestApproval: server request boom"))
+      ).toBe(true);
+    } finally {
+      console.error = originalConsoleError;
     }
   });
 });

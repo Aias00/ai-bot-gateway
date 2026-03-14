@@ -15,6 +15,7 @@ export function createDiscordRuntime(deps) {
     requestSelfRestartFromDiscord,
     collectImageAttachments,
     buildTurnInputFromMessage,
+    buildTurnRequestId,
     enqueuePrompt,
     getHelpText,
     handleCommand,
@@ -108,7 +109,13 @@ export function createDiscordRuntime(deps) {
       inputItems,
       message,
       setup: context.setup,
-      repoChannelId: context.repoChannelId
+      repoChannelId: context.repoChannelId,
+      platform: "discord",
+      requestId: buildTurnRequestId({
+        platform: "discord",
+        routeId: context.repoChannelId,
+        messageId: message.id
+      })
     });
   }
 
