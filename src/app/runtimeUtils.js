@@ -67,6 +67,11 @@ export function isBenignCodexStderrLine(line) {
   );
 }
 
+export function isMissingRolloutPathError(line) {
+  const normalized = String(line ?? "").toLowerCase();
+  return normalized.includes("state db missing rollout path for thread");
+}
+
 function stripAnsi(text) {
   const input = String(text ?? "");
   let output = "";

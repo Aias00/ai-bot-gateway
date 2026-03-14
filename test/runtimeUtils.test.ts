@@ -3,7 +3,8 @@ import {
   createDebugLog,
   formatInputTextForSetup,
   isBenignCodexStderrLine,
-  isDiscordMissingPermissionsError
+  isDiscordMissingPermissionsError,
+  isMissingRolloutPathError
 } from "../src/app/runtimeUtils.js";
 
 describe("runtime utils", () => {
@@ -37,6 +38,22 @@ describe("runtime utils", () => {
       )
     ).toBe(true);
     expect(isBenignCodexStderrLine("ERROR some_other_component: real failure")).toBe(false);
+  });
+
+  test("isMissingRolloutPathError detects rollout path errors", () => {
+    expect(
+      isMissingRolloutPathError("state db missing rollout path for thread 019ce72a-144e-79c2-9dc8-a08720e5661c")
+    ).toBe(true);
+    expect(
+      isMissingRolloutPathError("State db missing rollout path for thread some-thread-id")
+    ).toBe(true);
+    expect(
+      isMissingRolloutPathError("state db missing rollout path FOR thread abcdef")
+    ).toBe(true);
+    expect(
+      isMissingRolloutPathError("some other error not about rollout path")
+    ).toBe(false);
+    expect(isMissingRolloutPathError("")).toBe(false);
   });
 
   describe("createDebugLog", () => {

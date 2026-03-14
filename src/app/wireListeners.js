@@ -1,4 +1,4 @@
-import { isBenignCodexStderrLine } from "./runtimeUtils.js";
+import { isBenignCodexStderrLine, isMissingRolloutPathError } from "./runtimeUtils.js";
 
 export function wireBridgeListeners({
   codex,
@@ -11,6 +11,11 @@ export function wireBridgeListeners({
 }) {
   codex.on("stderr", (line) => {
     if (isBenignCodexStderrLine(line)) {
+      return;
+    }
+    if (isMissingRolloutPathError(line)) {
+      // 缺失 rollout path 不是致命错误，只记录警告
+      console.warn(`[codex] Ignoring missing rollout path error: ${line}`);
       return;
     }
     console.error(`[codex] ${line}`);

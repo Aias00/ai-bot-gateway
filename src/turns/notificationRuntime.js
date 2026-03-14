@@ -145,6 +145,16 @@ export function createNotificationRuntime(deps) {
           });
           return;
         }
+        // 忽略缺失 rollout path 错误
+        if (message && message.toLowerCase().includes("missing rollout path")) {
+          debugLog("transport", "ignoring missing rollout path error", {
+            threadId,
+            turnId: threadId,
+            discordMessageId: tracker.statusMessageId ?? null,
+            message: truncateStatusText(String(message ?? ""), 200)
+          });
+          return;
+        }
         await finalizeTurn(threadId, new Error(message));
       }
     }
