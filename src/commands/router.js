@@ -274,7 +274,7 @@ export function createCommandRouter(deps) {
     if (isDiscordPlatform) {
       lines.push(`\`${prefix}mkchannel <name>\` create a new text channel`);
       lines.push(
-        `\`${prefix}mkrepo <name>\` create a new text channel and bind a new project directory under DISCORD_REPO_ROOT`
+        `\`${prefix}mkrepo <name>\` create a new text channel and bind a new project directory under WORKSPACE_ROOT`
       );
       lines.push(`\`${prefix}mkbind <name> <absolute-path>\` create a new text channel and bind it to a repo/path`);
       lines.push(`\`${prefix}bind <absolute-path>\` bind this channel to an existing repo/path`);
@@ -351,7 +351,7 @@ export function createCommandRouter(deps) {
       return;
     }
     if (!repoRootPath) {
-      await safeReply(message, "Set `DISCORD_REPO_ROOT` in `.env` before using `!initrepo`.");
+      await safeReply(message, "Set `WORKSPACE_ROOT` in `.env` before using `!initrepo`.");
       return;
     }
 
@@ -561,7 +561,7 @@ export function createCommandRouter(deps) {
 
     if (options.initRepo) {
       if (!repoRootPath) {
-        await safeReply(message, "Set `DISCORD_REPO_ROOT` in `.env` before using `!mkrepo`.");
+        await safeReply(message, "Set `WORKSPACE_ROOT` in `.env` before using `!mkrepo`.");
         return;
       }
       await fs.mkdir(repoRootPath, { recursive: true });

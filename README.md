@@ -176,7 +176,7 @@ cp config/channels.example.json config/channels.json
 ```bash
 DISCORD_BOT_TOKEN=replace-me
 DISCORD_ALLOWED_USER_IDS=123456789012345678
-DISCORD_REPO_ROOT=/Users/you/projects
+WORKSPACE_ROOT=/Users/you/projects
 BACKEND_HTTP_ENABLED=1
 BACKEND_HTTP_HOST=127.0.0.1
 BACKEND_HTTP_PORT=8788
@@ -198,13 +198,14 @@ Optional hardening and routing overrides:
 ```bash
 # FEISHU_VERIFICATION_TOKEN=replace-me
 # FEISHU_ALLOWED_OPEN_IDS=ou_xxx
+# WORKSPACE_ROOT=/Users/you/projects
 # FEISHU_UNBOUND_CHAT_CWD=/Users/you/projects/default-repo
 # BACKEND_HTTP_HOST=0.0.0.0
 # BACKEND_HTTP_PORT=8788
 # FEISHU_WEBHOOK_PATH=/feishu/events
 ```
 
-Feishu repo chats do not auto-discover. New chats are usable by default through the open unbound workspace, which falls back to `FEISHU_UNBOUND_CHAT_CWD` and defaults to the bridge working directory. Add `feishu:<chat_id>` mappings to `config/channels.json` when you want a stable per-chat repo binding.
+Feishu repo chats do not auto-discover. New chats are usable by default through the open unbound workspace, which falls back to `FEISHU_UNBOUND_CHAT_CWD`, then `WORKSPACE_ROOT`, and finally the bridge working directory. Add `feishu:<chat_id>` mappings to `config/channels.json` when you want a stable per-chat repo binding.
 
 Transport notes:
 
@@ -245,7 +246,7 @@ curl -i http://127.0.0.1:8788/readyz
 - Slash commands are registered on startup and route to the same command handler.
 - Image attachments are forwarded into Codex turns.
 - `#general` stays read-only even if the bridge can write inside repo channels.
-- `!initrepo` creates and binds a repo under `DISCORD_REPO_ROOT`.
+- `!initrepo` creates and binds a repo under `WORKSPACE_ROOT`.
 - Creating a new text channel under the managed `codex-projects` category auto-runs the same repo bootstrap flow as `!initrepo` without `force`.
 
 ### Feishu
@@ -276,9 +277,9 @@ curl -i http://127.0.0.1:8788/readyz
 | Approve | `!approve [id]` | `/approve [id]` | `/approve [id]` | Uses latest pending approval if no id |
 | Decline | `!decline [id]` | `/decline [id]` | `/decline [id]` | Same routing rules as approve |
 | Cancel | `!cancel [id]` | `/cancel [id]` | `/cancel [id]` | Same routing rules as approve |
-| Init repo | `!initrepo [force]` | `/initrepo` | Not supported | Discord only, requires `DISCORD_REPO_ROOT` |
+| Init repo | `!initrepo [force]` | `/initrepo` | Not supported | Discord only, requires `WORKSPACE_ROOT` |
 | Create channel | `!mkchannel <name>` | Not supported | Not supported | Discord only, requires `Manage Channels` |
-| Create repo channel | `!mkrepo <name>` | Not supported | Not supported | Creates a new Discord text channel plus a repo binding under `DISCORD_REPO_ROOT` |
+| Create repo channel | `!mkrepo <name>` | Not supported | Not supported | Creates a new Discord text channel plus a repo binding under `WORKSPACE_ROOT` |
 | Create bound channel | `!mkbind <name> <abs-path>` | Not supported | Not supported | Creates a new Discord text channel already bound to an existing absolute path |
 | Bind | `!bind <abs-path>` | Not supported | Not supported | Binds the current Discord channel to an existing absolute path |
 | Rebind | `!rebind <abs-path>` | Not supported | Not supported | Switches the current Discord channel to a different absolute path |
@@ -310,7 +311,9 @@ Use `.env.example` as the exhaustive reference. The most important variables are
 | `DISCORD_BOT_TOKEN` | Enables Discord runtime |
 | `DISCORD_GUILD_ID` | Pins one guild when the bot belongs to multiple guilds |
 | `DISCORD_ALLOWED_USER_IDS` | Comma-separated Discord allowlist |
-| `DISCORD_REPO_ROOT` | Base path used by `!initrepo` |
+| `WORKSPACE_ROOT` | Shared base path used by Discord repo creation and as the default Feishu unbound workspace |
+| `PROJECTS_ROOT` | Legacy alias for `WORKSPACE_ROOT` |
+| `DISCORD_REPO_ROOT` | Legacy alias for `WORKSPACE_ROOT` |
 | `DISCORD_GENERAL_CHANNEL_ID` | Optional explicit read-only general channel |
 | `DISCORD_GENERAL_CHANNEL_NAME` | Fallback general channel name, default `general` |
 | `FEISHU_APP_ID` | Enables Feishu runtime with app secret |
@@ -321,7 +324,7 @@ Use `.env.example` as the exhaustive reference. The most important variables are
 | `FEISHU_GENERAL_CHAT_ID` | Optional read-only Feishu general chat |
 | `FEISHU_REQUIRE_MENTION_IN_GROUP` | Require mention for plain prompts in group chats |
 | `FEISHU_UNBOUND_CHAT_MODE` | Feishu fallback for unmapped chats; defaults to `open` |
-| `FEISHU_UNBOUND_CHAT_CWD` | Workspace used by open unmapped Feishu chats; defaults to the bridge cwd |
+| `FEISHU_UNBOUND_CHAT_CWD` | Optional override for open unmapped Feishu chats; defaults to `WORKSPACE_ROOT`, then the bridge cwd |
 | `BACKEND_HTTP_ENABLED` | Forces backend HTTP server on; enabled automatically when Feishu is configured |
 | `BACKEND_HTTP_HOST` | Optional backend bind address, default `0.0.0.0` |
 | `BACKEND_HTTP_PORT` | Optional backend bind port, default `8788` |
@@ -618,7 +621,7 @@ Before enabling, set at least:
 - `BRIDGE_ROOT`
 - `NODE_BIN`
 - one chat platform credential set
-- `DISCORD_REPO_ROOT` if you want Discord `!initrepo`
+- `WORKSPACE_ROOT` if you want Discord `!initrepo`
 - backend bind variables if Feishu or external health checks are required
 
 ## Operator CLI
@@ -671,7 +674,7 @@ Before enabling, set at least:
 ## Notes
 
 - This bot uses `codex app-server` over `stdio` and sends `initialize` + `initialized`.
-- `!mkrepo` uses `DISCORD_REPO_ROOT`; it creates the project folder from the final channel name and binds the new channel without running `git init`.
+- `!mkrepo` uses `WORKSPACE_ROOT`; it creates the project folder from the final channel name and binds the new channel without running `git init`.
 - `!mkchannel` and `!mkbind` require Discord `Manage Channels`.
 - `!bind` and `!rebind` persist the `codex-cwd:` topic tag so bindings survive restarts without editing `config/channels.json`.
 - `!setmodel` persists a per-channel model override; `!clearmodel` removes it so the channel falls back to `defaultModel`.
@@ -702,7 +705,7 @@ Before enabling, set at least:
 - `401 Unauthorized` from Discord usually means the bot token is invalid or rotated
 - If the bot is in multiple guilds and `DISCORD_GUILD_ID` is missing, startup will fail intentionally
 - If no Discord project channels appear, either Codex has no discoverable threads yet or `autoDiscoverProjects` is disabled
-- If `!initrepo` fails, confirm `DISCORD_REPO_ROOT` is set and writable
+- If `!initrepo` fails, confirm `WORKSPACE_ROOT` is set and writable
 - If Feishu webhook requests return `403`, verify `FEISHU_VERIFICATION_TOKEN`
 - If you do not know the correct Feishu identifiers yet, leave `FEISHU_ALLOWED_OPEN_IDS` unset temporarily and send `/where` in the target chat
 - If `/readyz` returns `503`, check `bun run cli logs` for startup failures

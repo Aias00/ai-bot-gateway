@@ -14,6 +14,9 @@ function normalizeFeishuUnboundChatMode(rawMode) {
   if (["open", "1", "true", "all"].includes(normalized)) {
     return "open";
   }
+  if (["strict", "0", "false", "bound-only"].includes(normalized)) {
+    return "strict";
+  }
   return "open";
 }
 
@@ -22,7 +25,7 @@ export function loadRuntimeEnv() {
   const statePath = path.resolve(process.env.STATE_PATH ?? "data/state.json");
   const codexBin = process.env.CODEX_BIN ?? "codex";
   const codexHomeEnv = process.env.CODEX_HOME;
-  const repoRootEnv = process.env.DISCORD_REPO_ROOT;
+  const repoRootEnv = process.env.WORKSPACE_ROOT ?? process.env.PROJECTS_ROOT ?? process.env.DISCORD_REPO_ROOT;
   const repoRootPath = repoRootEnv ? path.resolve(repoRootEnv) : null;
   const managedChannelTopicPrefix = "codex-cwd:";
   const managedThreadTopicPrefix = "codex-thread:";
@@ -111,7 +114,7 @@ export function loadRuntimeEnv() {
       ? Math.floor(configuredFeishuStreamMinChars)
       : 80;
   const feishuUnboundChatMode = normalizeFeishuUnboundChatMode(process.env.FEISHU_UNBOUND_CHAT_MODE);
-  const feishuUnboundChatCwd = path.resolve(process.env.FEISHU_UNBOUND_CHAT_CWD ?? process.cwd());
+  const feishuUnboundChatCwd = path.resolve(process.env.FEISHU_UNBOUND_CHAT_CWD ?? repoRootEnv ?? process.cwd());
 
   return {
     configPath,

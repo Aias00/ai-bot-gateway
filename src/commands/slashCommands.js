@@ -46,7 +46,7 @@ export function buildSlashCommandPayloads() {
       ),
     new SlashCommandBuilder()
       .setName("initrepo")
-      .setDescription("Create or rebind a repo for this channel under DISCORD_REPO_ROOT")
+      .setDescription("Create or rebind a repo for this channel under WORKSPACE_ROOT")
       .addBooleanOption((option) =>
         option.setName("force").setDescription("Rebind even if the path or channel is already in use").setRequired(false)
       ),

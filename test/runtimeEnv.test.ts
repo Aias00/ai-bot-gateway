@@ -6,6 +6,8 @@ const ENV_KEYS = [
   "STATE_PATH",
   "CODEX_BIN",
   "CODEX_HOME",
+  "WORKSPACE_ROOT",
+  "PROJECTS_ROOT",
   "DISCORD_REPO_ROOT",
   "DISCORD_GENERAL_CHANNEL_ID",
   "DISCORD_GENERAL_CHANNEL_NAME",
@@ -59,7 +61,7 @@ describe("runtime env", () => {
     process.env.STATE_PATH = "data/custom-state.json";
     process.env.CODEX_BIN = "/usr/local/bin/codex";
     process.env.CODEX_HOME = "/tmp/codex-home";
-    process.env.DISCORD_REPO_ROOT = ".";
+    process.env.WORKSPACE_ROOT = ".";
     process.env.DISCORD_GENERAL_CHANNEL_NAME = "GENERAL";
     process.env.DISCORD_MAX_IMAGES_PER_MESSAGE = "7";
     process.env.DISCORD_MESSAGE_CHUNK_LIMIT = "1850";
@@ -83,6 +85,7 @@ describe("runtime env", () => {
     expect(env.statePath.endsWith("data/custom-state.json")).toBe(true);
     expect(env.codexBin).toBe("/usr/local/bin/codex");
     expect(env.codexHomeEnv).toBe("/tmp/codex-home");
+    expect(env.repoRootPath).toBe(process.cwd());
     expect(env.generalChannelName).toBe("general");
     expect(env.maxImagesPerMessage).toBe(7);
     expect(env.discordMessageChunkLimit).toBe(1850);
@@ -124,6 +127,26 @@ describe("runtime env", () => {
     expect(env.feishuUnboundChatMode).toBe("open");
   });
 
+  test("uses WORKSPACE_ROOT as the default Feishu unbound cwd", () => {
+    process.env.WORKSPACE_ROOT = "/tmp/shared-projects-root";
+
+    const env = loadRuntimeEnv();
+
+    expect(env.repoRootPath).toBe("/tmp/shared-projects-root");
+    expect(env.feishuUnboundChatCwd).toBe("/tmp/shared-projects-root");
+  });
+
+  test("accepts PROJECTS_ROOT as a legacy alias", () => {
+    delete process.env.WORKSPACE_ROOT;
+    delete process.env.DISCORD_REPO_ROOT;
+    process.env.PROJECTS_ROOT = "/tmp/legacy-projects-root";
+
+    const env = loadRuntimeEnv();
+
+    expect(env.repoRootPath).toBe("/tmp/legacy-projects-root");
+    expect(env.feishuUnboundChatCwd).toBe("/tmp/legacy-projects-root");
+  });
+
   test("normalizes Feishu unbound chat mode and cwd", () => {
     process.env.FEISHU_UNBOUND_CHAT_MODE = "all";
     process.env.FEISHU_UNBOUND_CHAT_CWD = "/tmp/feishu-open";
@@ -132,6 +155,14 @@ describe("runtime env", () => {
 
     expect(env.feishuUnboundChatMode).toBe("open");
     expect(env.feishuUnboundChatCwd).toBe("/tmp/feishu-open");
+  });
+
+  test("keeps strict Feishu unbound mode when explicitly configured", () => {
+    process.env.FEISHU_UNBOUND_CHAT_MODE = "strict";
+
+    const env = loadRuntimeEnv();
+
+    expect(env.feishuUnboundChatMode).toBe("strict");
   });
 
   test("supports disabling Feishu segmented streaming", () => {

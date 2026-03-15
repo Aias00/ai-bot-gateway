@@ -54,6 +54,8 @@ export function buildBridgeRuntimes(deps) {
     imageCacheDir,
     feishuGeneralChatId,
     feishuGeneralCwd,
+    feishuUnboundChatMode,
+    feishuUnboundChatCwd,
     feishuRequireMentionInGroup,
     feishuSegmentedStreaming,
     feishuStreamMinChars,
@@ -175,6 +177,8 @@ export function buildBridgeRuntimes(deps) {
       imageCacheDir,
       feishuGeneralChatId,
       feishuGeneralCwd,
+      feishuUnboundChatMode,
+      feishuUnboundChatCwd,
       feishuRequireMentionInGroup
     },
     getChannelSetups,
