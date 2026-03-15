@@ -234,6 +234,18 @@ export function createFeishuRuntime(deps) {
       return;
     }
 
+    const pendingApprovalToken = runtimeAdapters.findLatestPendingApprovalTokenForChannel?.(context.repoChannelId) ?? null;
+    if (pendingApprovalToken) {
+      await safeReply(
+        inboundMessage,
+        [
+          `There is a pending approval in this chat: \`${pendingApprovalToken}\`.`,
+          `Reply \`!approve ${pendingApprovalToken}\`, \`!decline ${pendingApprovalToken}\`, or \`!cancel ${pendingApprovalToken}\` first.`
+        ].join("\n")
+      );
+      return;
+    }
+
     const inputItems = await runtimeAdapters.buildTurnInputFromMessage(inboundMessage, text, [], context.setup);
     if (inputItems.length === 0) {
       return;

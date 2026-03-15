@@ -10,6 +10,7 @@ function createHarness(options: {
   isGeneralChannel?: () => boolean;
   channelIsTextBased?: boolean;
   stateChannelId?: string | null;
+  channelPlatform?: string;
   buildResponseForServerRequestOverride?: ((method: string, params: unknown, decision: string) => unknown) | null;
 } = {}) {
   const pendingApprovals = new Map<string, Record<string, unknown>>();
@@ -30,6 +31,7 @@ function createHarness(options: {
 
   const channel = {
     id: "channel-1",
+    platform: options.channelPlatform,
     isTextBased: () => options.channelIsTextBased !== false,
     async send(payload: Record<string, unknown>) {
       approvalMessages.push(payload);
@@ -134,6 +136,25 @@ describe("server request runtime integration", () => {
 
     expect(harness.pendingApprovals.size).toBe(1);
     expect(harness.approvalMessages.length).toBe(1);
+  });
+
+  test("uses chat command instructions instead of button copy for Feishu approvals", async () => {
+    const harness = createHarness({ channelPlatform: "feishu" });
+
+    await harness.runtime.handleServerRequest({
+      id: "req-feishu-1",
+      method: "commandExecution/requestApproval",
+      params: {
+        threadId: "thread-1",
+        command: "git status",
+        cwd: "/tmp/repo"
+      }
+    });
+
+    expect(harness.approvalMessages.length).toBe(1);
+    expect(String(harness.approvalMessages[0]?.content ?? "")).toContain("Reply `!approve 0001`");
+    expect(String(harness.approvalMessages[0]?.content ?? "")).not.toContain("Use buttons below");
+    expect("components" in (harness.approvalMessages[0] ?? {})).toBe(false);
   });
 
   test("applies approval decisions through shared command/button path", async () => {

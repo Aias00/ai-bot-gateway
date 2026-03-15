@@ -145,17 +145,23 @@ export function createServerRequestRuntime(deps) {
       `[approval:request] queued method=${resolvedMethod} token=${token} requestId=${String(id)} channelId=${repoChannelId} threadId=${threadId ?? "n/a"}`
     );
 
+    const supportsApprovalButtons = channel?.platform !== "feishu";
     const approvalContent = truncateForDiscordMessage(
       [
         `Approval requested: \`${resolvedMethod}\``,
-        `Use buttons below (or \`!approve ${token}\` / \`!decline ${token}\` / \`!cancel ${token}\`)`,
+        supportsApprovalButtons
+          ? `Use buttons below (or \`!approve ${token}\` / \`!decline ${token}\` / \`!cancel ${token}\`)`
+          : `Reply \`!approve ${token}\`, \`!decline ${token}\`, or \`!cancel ${token}\` in this chat to continue.`,
         ...detailLines
       ].join("\n")
     );
-    const approvalMessage = await channel.send({
-      content: approvalContent,
-      components: buildApprovalActionRows(token, approvalButtonPrefix)
-    });
+    const approvalPayload = {
+      content: approvalContent
+    };
+    if (supportsApprovalButtons) {
+      approvalPayload.components = buildApprovalActionRows(token, approvalButtonPrefix);
+    }
+    const approvalMessage = await channel.send(approvalPayload);
     const record = pendingApprovals.get(token);
     if (record) {
       record.approvalMessageId = approvalMessage.id;
@@ -208,12 +214,16 @@ export function createServerRequestRuntime(deps) {
     const statusLine = `Decision: \`${decision}\` by ${actorMention}`;
     const previous = typeof approvalMessage.content === "string" ? approvalMessage.content : "";
     const content = previous.includes("Decision:") ? previous : `${previous}\n${statusLine}`;
-    await approvalMessage
-      .edit({
-        content,
-        components: buildApprovalActionRows(token, approvalButtonPrefix, { disabled: true, selectedDecision: decision })
-      })
-      .catch(() => null);
+    const editPayload = {
+      content
+    };
+    if (channel?.platform !== "feishu") {
+      editPayload.components = buildApprovalActionRows(token, approvalButtonPrefix, {
+        disabled: true,
+        selectedDecision: decision
+      });
+    }
+    await approvalMessage.edit(editPayload).catch(() => null);
   }
 
   function findPendingApprovalTokenByRequestId(requestId) {
