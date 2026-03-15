@@ -93,8 +93,8 @@ paper_trading:
   notifications:
     dingtalk:
       enabled: true
-      webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=735c218ed0fbba0921116869bb6c2d65fb52343caaa3956df852e28a675e12e1"
-      secret: "SECa3dc25f7d22281c6286098a2c1c67036f7ad017999a1ac137d11b7bfe6e4c0d3"
+      webhook_url: "${DINGTALK_WEBHOOK_URL}"
+      secret: "${DINGTALK_SECRET}"
       notify_on_open: true
       notify_on_close: true
       notify_on_error: true
