@@ -139,7 +139,7 @@ describe("notification runtime ux flow cutover", () => {
 
     const runtime = createNotificationRuntime({
       activeTurns,
-      renderVerbosity: "user",
+      renderVerbosity: "ops",
       TURN_PHASE: {
         RUNNING: "running",
         RECONNECTING: "reconnecting",
@@ -285,6 +285,62 @@ describe("notification runtime ux flow cutover", () => {
 
     expect(chunkedMessages).toEqual(["Summary without local image path"]);
     expect(sentMessages).toEqual([]);
+  });
+
+  test("does not send file diff block in user verbosity", async () => {
+    const activeTurns = new Map<string, TurnTracker>();
+    const tracker = createTracker();
+    activeTurns.set("thread-1", tracker);
+    const chunkedMessages: string[] = [];
+
+    const runtime = createNotificationRuntime({
+      activeTurns,
+      renderVerbosity: "user",
+      TURN_PHASE: {
+        RUNNING: "running",
+        RECONNECTING: "reconnecting",
+        FINALIZING: "finalizing",
+        FAILED: "failed",
+        DONE: "done"
+      },
+      transitionTurnPhase: () => true,
+      normalizeCodexNotification: (notification: CodexNotification) => {
+        const { method, params } = notification;
+        return method === "turn/completed" ? { kind: "turn_completed", threadId: params.threadId } : { kind: "unknown" };
+      },
+      extractAgentMessageText: () => "",
+      maybeSendAttachmentsForItem: async () => {},
+      maybeSendInferredAttachmentsFromText: async () => 0,
+      recordFileChanges: () => {},
+      summarizeItemForStatus: () => [],
+      extractWebSearchDetails: () => [],
+      buildFileDiffSection: () => "```ansi\n+2 -1\n```",
+      buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
+      sendChunkedToChannel: async (_channel: unknown, text: string) => {
+        chunkedMessages.push(text);
+      },
+      normalizeFinalSummaryText: (text: string) => text.trim(),
+      truncateStatusText: (text: string) => text,
+      isTransientReconnectErrorMessage: () => false,
+      safeSendToChannel: async () => null,
+      truncateForDiscordMessage: (text: string) => text,
+      discordMaxMessageLength: 1900,
+      debugLog: () => {},
+      writeHeartbeatFile: async () => {},
+      onTurnFinalized: async () => {},
+      turnCompletionQuietMs: 5,
+      turnCompletionMaxWaitMs: 20
+    });
+
+    tracker.fullText = "Summary only";
+    await runtime.handleNotification({
+      method: "turn/completed",
+      params: { threadId: "thread-1" }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 70));
+
+    expect(chunkedMessages).toContain("Summary only");
+    expect(chunkedMessages.some((line) => line.includes("```ansi"))).toBe(false);
   });
 
   test("creates only one working message under concurrent tool-start events", async () => {
@@ -830,7 +886,7 @@ describe("notification runtime ux flow cutover", () => {
     expect(tracker.thinkingTicker).toBeNull();
   });
 
-  test("queues imageView attachment paths in cutover mode (no immediate upload)", async () => {
+  test("sends imageView attachments immediately when item completes", async () => {
     const activeTurns = new Map<string, TurnTracker>();
     const tracker = createTracker();
     activeTurns.set("thread-1", tracker);
@@ -880,10 +936,8 @@ describe("notification runtime ux flow cutover", () => {
       method: "item/completed",
       params: { threadId: "thread-1", item: { id: "img-1", type: "imageView", path: "/tmp/example.png" } }
     });
-    expect(itemAttachmentCalls).toEqual([]);
-    expect((tracker as TurnTracker & { pendingAttachmentPaths?: Set<string> }).pendingAttachmentPaths?.has("/tmp/example.png")).toBe(
-      true
-    );
+    expect(itemAttachmentCalls).toEqual(["imageView"]);
+    expect((tracker as TurnTracker & { pendingAttachmentPaths?: Set<string> }).pendingAttachmentPaths).toBeUndefined();
   });
 
   test("clears thinking ticker at finalize start before summary send", async () => {

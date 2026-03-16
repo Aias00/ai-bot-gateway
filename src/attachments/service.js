@@ -4,7 +4,6 @@ import process from "node:process";
 
 const SUPPORTED_ATTACHMENT_EXT_PATTERN =
   "(?:png|jpe?g|webp|gif|bmp|tiff?|svg|mp4|mov|m4v|webm|mkv|avi|mp3|m4a|wav|flac|aac|ogg|txt|md|json|csv|log|pdf|zip|tar|gz|tgz|bz2|7z|docx?|xlsx?|pptx?)";
-const IMAGE_ATTACHMENT_EXT_PATTERN = "(?:png|jpe?g|webp|gif|bmp|tiff?|svg)";
 
 export async function maybeSendAttachmentsForItem(tracker, item, context) {
   const {
@@ -37,10 +36,6 @@ export async function maybeSendAttachmentsForItem(tracker, item, context) {
       telemetry.detected += candidates.length;
 
   for (const candidate of candidates) {
-    if (itemType === "imageView" && candidate.intent === "explicit_user_request" && !isSupportedImagePath(candidate.path)) {
-      telemetry.skipped += 1;
-      continue;
-    }
     const announceFailures =
       itemType === "imageView" ||
       candidate.intent === "explicit_user_request" ||
@@ -635,14 +630,6 @@ function isSupportedMediaPath(value) {
   }
   const normalized = value.trim().toLowerCase();
   return new RegExp(`\\.${SUPPORTED_ATTACHMENT_EXT_PATTERN}$`, "i").test(normalized);
-}
-
-function isSupportedImagePath(value) {
-  if (typeof value !== "string" || !value.trim()) {
-    return false;
-  }
-  const normalized = value.trim().toLowerCase();
-  return new RegExp(`\\.${IMAGE_ATTACHMENT_EXT_PATTERN}$`, "i").test(normalized);
 }
 
 function resolveAttachmentRoots(tracker, attachmentRoots, imageCacheDir) {

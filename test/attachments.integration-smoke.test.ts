@@ -60,7 +60,7 @@ describe("attachments integration smoke", () => {
     expect(Array.isArray(sentPayloads[0]?.files)).toBe(true);
   });
 
-  test("skips non-image files for explicit imageView items", async () => {
+  test("sends basename non-image files for explicit imageView items", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-bridge-attach-"));
     tempDirs.push(tmpDir);
     const realTmpDir = await fs.realpath(tmpDir);
@@ -79,7 +79,7 @@ describe("attachments integration smoke", () => {
 
     await maybeSendAttachmentsForItem(
       tracker,
-      { type: "imageView", id: "item-1b", path: jsonPath },
+      { type: "imageView", id: "item-1b", path: "package.json" },
       {
         attachmentsEnabled: true,
         attachmentItemTypes: new Set(["imageView"]),
@@ -102,7 +102,8 @@ describe("attachments integration smoke", () => {
     );
 
     expect(issueMessages).toEqual([]);
-    expect(sentPayloads).toEqual([]);
+    expect(sentPayloads.length).toBe(1);
+    expect(String(sentPayloads[0]?.content ?? "")).toContain("package.json");
   });
 
   test("inferred text fallback uploads only the last referenced media path", async () => {

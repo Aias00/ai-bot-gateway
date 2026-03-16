@@ -9,6 +9,7 @@ import { normalizeFinalSummaryText } from "../turns/textNormalization.js";
 export function buildNotificationRuntime(deps) {
   const {
     activeTurns,
+    renderVerbosity = "user",
     runtimeAdapters,
     safeSendToChannel,
     debugLog,
@@ -23,10 +24,12 @@ export function buildNotificationRuntime(deps) {
 
   return createNotificationRuntime({
     activeTurns,
+    renderVerbosity,
     TURN_PHASE,
     transitionTurnPhase,
     normalizeCodexNotification,
     extractAgentMessageText,
+    maybeSendAttachmentsForItem: runtimeAdapters.maybeSendAttachmentsForItem,
     maybeSendInferredAttachmentsFromText: runtimeAdapters.maybeSendInferredAttachmentsFromText,
     recordFileChanges,
     buildFileDiffSection,

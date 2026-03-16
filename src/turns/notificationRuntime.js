@@ -1,13 +1,15 @@
-import { collectLikelyLocalPathsFromText, extractAttachmentCandidates } from "../attachments/service.js";
+import { collectLikelyLocalPathsFromText } from "../attachments/service.js";
 import { isMissingRolloutPathError } from "../app/runtimeUtils.js";
 
 export function createNotificationRuntime(deps) {
   const {
+    renderVerbosity = "user",
     activeTurns,
     TURN_PHASE,
     transitionTurnPhase,
     normalizeCodexNotification,
     extractAgentMessageText,
+    maybeSendAttachmentsForItem = async () => {},
     maybeSendInferredAttachmentsFromText,
     recordFileChanges,
     buildFileDiffSection,
@@ -98,7 +100,7 @@ export function createNotificationRuntime(deps) {
 
       if (state === "completed") {
         if (item?.type === "imageView") {
-          queueAttachmentCandidatesForLater(tracker, item);
+          await maybeSendAttachmentsForItem(tracker, item);
         }
       }
 
@@ -255,12 +257,8 @@ export function createNotificationRuntime(deps) {
 
       tracker.fullText = normalizeFinalSummaryText(tracker.fullText);
       const summaryTextForDiscord = sanitizeSummaryForDiscord(tracker.fullText);
-      const diffBlock = buildFileDiffSection(tracker);
-      const pendingAttachmentPaths = tracker.pendingAttachmentPaths ? [...tracker.pendingAttachmentPaths] : [];
-      const attachmentHintText =
-        pendingAttachmentPaths.length > 0
-          ? `${tracker.fullText}\n${pendingAttachmentPaths.join("\n")}`
-          : tracker.fullText;
+      const diffBlock = renderVerbosity === "ops" ? buildFileDiffSection(tracker) : "";
+      const attachmentHintText = tracker.fullText;
       const inferredSummaryPaths = collectLikelyLocalPathsFromText(attachmentHintText);
       debugLog("summary", "prepared summary text", {
         threadId: tracker.threadId,
@@ -325,22 +323,6 @@ export function createNotificationRuntime(deps) {
         await writeHeartbeatFile();
       } catch (heartbeatError) {
         console.error(`failed to write heartbeat after turn ${threadId}: ${formatErrorMessage(heartbeatError)}`);
-      }
-    }
-  }
-
-  function queueAttachmentCandidatesForLater(tracker, item) {
-    if (!tracker || !item || typeof item !== "object") {
-      return;
-    }
-    if (!tracker.pendingAttachmentPaths) {
-      tracker.pendingAttachmentPaths = new Set();
-    }
-    const candidates = extractAttachmentCandidates(item, { attachmentInferFromText: true });
-    for (const candidate of candidates) {
-      const value = typeof candidate?.path === "string" ? candidate.path.trim() : "";
-      if (value) {
-        tracker.pendingAttachmentPaths.add(value);
       }
     }
   }
