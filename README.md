@@ -635,7 +635,8 @@ The repo includes [com.codex.discord.bridge.plist](com.codex.discord.bridge.plis
 
 Notes:
 
-- The checked-in plist contains absolute paths for the current host
+- `bun run cli start` now syncs a generated plist into `~/Library/LaunchAgents/<label>.plist` before calling `launchctl`
+- The checked-in plist is treated as a source template for label/log defaults; the installed LaunchAgent always points at the current repo root
 - If you deploy on another machine, edit `WorkingDirectory`, `ProgramArguments`, `HOME`, and `PATH`
 - `bun run cli start` bootstraps, enables, and kickstarts the launch agent
 - `bun run cli stop` bootouts the launch agent
