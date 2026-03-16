@@ -60,6 +60,51 @@ describe("attachments integration smoke", () => {
     expect(Array.isArray(sentPayloads[0]?.files)).toBe(true);
   });
 
+  test("skips non-image files for explicit imageView items", async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-bridge-attach-"));
+    tempDirs.push(tmpDir);
+    const realTmpDir = await fs.realpath(tmpDir);
+    const jsonPath = path.join(realTmpDir, "package.json");
+    await fs.writeFile(jsonPath, '{"name":"demo"}');
+
+    const sentPayloads: Array<Record<string, unknown>> = [];
+    const issueMessages: string[] = [];
+    const tracker = {
+      channel: { id: "channel-1b" },
+      cwd: realTmpDir,
+      sentAttachmentKeys: new Set<string>(),
+      seenAttachmentIssueKeys: new Set<string>(),
+      attachmentIssueCount: 0
+    };
+
+    await maybeSendAttachmentsForItem(
+      tracker,
+      { type: "imageView", id: "item-1b", path: jsonPath },
+      {
+        attachmentsEnabled: true,
+        attachmentItemTypes: new Set(["imageView"]),
+        attachmentMaxBytes: 8 * 1024 * 1024,
+        attachmentRoots: [realTmpDir],
+        imageCacheDir: realTmpDir,
+        attachmentInferFromText: false,
+        statusLabelForItemType: () => "image view",
+        safeSendToChannel: async (_channel: unknown, text: string) => {
+          issueMessages.push(text);
+          return null;
+        },
+        safeSendToChannelPayload: async (_channel: unknown, payload: Record<string, unknown>) => {
+          sentPayloads.push(payload);
+          return null;
+        },
+        truncateStatusText: (text: string) => text,
+        maxAttachmentIssueMessages: 1
+      }
+    );
+
+    expect(issueMessages).toEqual([]);
+    expect(sentPayloads).toEqual([]);
+  });
+
   test("inferred text fallback uploads only the last referenced media path", async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "codex-bridge-attach-"));
     tempDirs.push(tmpDir);
