@@ -28,7 +28,20 @@ export async function runStartCommand(
   }
 
   const service = resolveLaunchdServiceInfo(context.cwd);
-  await installLaunchdPlist(service);
+  try {
+    await installLaunchdPlist(service);
+  } catch (error) {
+    return {
+      ok: false,
+      message: "failed to prepare launchd service files",
+      details: {
+        serviceTarget: service.serviceTarget,
+        plistPath: service.installedPlistPath,
+        sourcePlistPath: service.sourcePlistPath,
+        error: truncateError(error)
+      }
+    };
+  }
   const bootstrap = await runner(["bootstrap", service.domain, service.installedPlistPath]);
   const alreadyLoaded = bootstrap.code !== 0 && (isAlreadyLoaded(bootstrap.stderr) || (await isLoadedService(service, runner)));
   if (bootstrap.code !== 0 && !alreadyLoaded) {
@@ -145,6 +158,11 @@ function truncate(value: string, limit = 400): string {
     return text;
   }
   return `${text.slice(0, limit)}...`;
+}
+
+function truncateError(error: unknown, limit = 400): string {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return truncate(message, limit);
 }
 
 async function installLaunchdPlist(service: ReturnType<typeof resolveLaunchdServiceInfo>): Promise<void> {
