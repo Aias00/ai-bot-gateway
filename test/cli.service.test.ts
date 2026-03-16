@@ -3,26 +3,42 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { runStartCommand, runStopCommand } from "../src/cli/commands/service.js";
+import { resolveInstalledLaunchdPlistPath } from "../src/cli/paths.js";
 
 const tempDirs: string[] = [];
 const originalLaunchdLabel = process.env.DISCORD_LAUNCHD_LABEL;
+const originalHome = process.env.HOME;
 
 afterEach(async () => {
   process.env.DISCORD_LAUNCHD_LABEL = originalLaunchdLabel;
+  process.env.HOME = originalHome;
   for (const dir of tempDirs.splice(0)) {
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
 
+async function seedLaunchdSupportFiles(cwd: string): Promise<void> {
+  await fs.mkdir(path.join(cwd, "scripts"), { recursive: true });
+  await fs.writeFile(
+    path.join(cwd, "scripts", "restart-supervisor.sh"),
+    "#!/usr/bin/env bash\n# Host-managed restart supervisor\n",
+    "utf8"
+  );
+}
+
 describe("cli service commands", () => {
   test("start command bootstraps/enables/kickstarts service", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-start-"));
     tempDirs.push(cwd);
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-home-"));
+    tempDirs.push(fakeHome);
+    process.env.HOME = fakeHome;
     await fs.writeFile(
       path.join(cwd, "com.codex.discord.bridge.plist"),
       "<plist><dict><key>Label</key><string>com.codex.discord.bridge</string></dict></plist>",
       "utf8"
     );
+    await seedLaunchdSupportFiles(cwd);
     const calls: string[][] = [];
 
     const result = await runStartCommand([], { cwd, now: new Date() }, async (args) => {
@@ -31,18 +47,30 @@ describe("cli service commands", () => {
     });
 
     const domain = `gui/${typeof process.getuid === "function" ? process.getuid() : 0}`;
+    const installedPlistPath = resolveInstalledLaunchdPlistPath("com.codex.discord.bridge");
+    const supportRoot = path.join(fakeHome, "Library", "Application Support", "CodexDiscordBridge", "com.codex.discord.bridge");
+    const managedWrapperPath = path.join(supportRoot, "launchd-wrapper.sh");
+    const managedSupervisorPath = path.join(supportRoot, "restart-supervisor.sh");
     expect(result.ok).toBe(true);
     expect(result.message).toBe("service started");
     expect(calls).toEqual([
-      ["bootstrap", domain, path.join(cwd, "com.codex.discord.bridge.plist")],
+      ["bootstrap", domain, installedPlistPath],
       ["enable", `${domain}/com.codex.discord.bridge`],
       ["kickstart", "-k", `${domain}/com.codex.discord.bridge`]
     ]);
+    expect(await fs.readFile(installedPlistPath, "utf8")).toContain("/bin/bash");
+    expect(await fs.readFile(installedPlistPath, "utf8")).toContain(managedWrapperPath);
+    expect(await fs.readFile(managedWrapperPath, "utf8")).toContain(path.join(cwd, "scripts/start-with-proxy.mjs"));
+    expect(await fs.readFile(managedSupervisorPath, "utf8")).toContain("Host-managed restart supervisor");
   });
 
   test("start tolerates already-loaded bootstrap responses", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-start-"));
     tempDirs.push(cwd);
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-home-"));
+    tempDirs.push(fakeHome);
+    process.env.HOME = fakeHome;
+    await seedLaunchdSupportFiles(cwd);
     const calls: string[][] = [];
     let invocation = 0;
 
@@ -62,6 +90,10 @@ describe("cli service commands", () => {
   test("start tolerates launchctl bootstrap I/O error when service is already loaded", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-start-"));
     tempDirs.push(cwd);
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-home-"));
+    tempDirs.push(fakeHome);
+    process.env.HOME = fakeHome;
+    await seedLaunchdSupportFiles(cwd);
     const calls: string[][] = [];
     let invocation = 0;
 
@@ -79,7 +111,11 @@ describe("cli service commands", () => {
 
     expect(result.ok).toBe(true);
     expect(calls).toEqual([
-      ["bootstrap", `gui/${typeof process.getuid === "function" ? process.getuid() : 0}`, path.join(cwd, "com.codex.discord.bridge.plist")],
+      [
+        "bootstrap",
+        `gui/${typeof process.getuid === "function" ? process.getuid() : 0}`,
+        resolveInstalledLaunchdPlistPath("com.codex.discord.bridge")
+      ],
       ["print", `gui/${typeof process.getuid === "function" ? process.getuid() : 0}/com.codex.discord.bridge`],
       ["enable", `gui/${typeof process.getuid === "function" ? process.getuid() : 0}/com.codex.discord.bridge`],
       ["kickstart", "-k", `gui/${typeof process.getuid === "function" ? process.getuid() : 0}/com.codex.discord.bridge`]
@@ -89,11 +125,15 @@ describe("cli service commands", () => {
   test("start tolerates kickstart failure when the service is already loaded", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-start-"));
     tempDirs.push(cwd);
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-home-"));
+    tempDirs.push(fakeHome);
+    process.env.HOME = fakeHome;
     await fs.writeFile(
       path.join(cwd, "com.codex.discord.bridge.plist"),
       "<plist><dict><key>Label</key><string>com.codex.discord.bridge</string></dict></plist>",
       "utf8"
     );
+    await seedLaunchdSupportFiles(cwd);
     const calls: string[][] = [];
     let invocation = 0;
 
@@ -112,7 +152,7 @@ describe("cli service commands", () => {
     const domain = `gui/${typeof process.getuid === "function" ? process.getuid() : 0}`;
     expect(result.ok).toBe(true);
     expect(calls).toEqual([
-      ["bootstrap", domain, path.join(cwd, "com.codex.discord.bridge.plist")],
+      ["bootstrap", domain, resolveInstalledLaunchdPlistPath("com.codex.discord.bridge")],
       ["enable", `${domain}/com.codex.discord.bridge`],
       ["kickstart", "-k", `${domain}/com.codex.discord.bridge`],
       ["print", `${domain}/com.codex.discord.bridge`]

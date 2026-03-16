@@ -1,6 +1,8 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { spawn } from "node:child_process";
 import type { CliCommandResult, CliContext } from "../../types/events.js";
-import { resolveLaunchdServiceInfo } from "../paths.js";
+import { renderLaunchdPlist, renderManagedLaunchdWrapper, resolveLaunchdServiceInfo } from "../paths.js";
 
 interface LaunchctlResult {
   code: number | null;
@@ -26,7 +28,8 @@ export async function runStartCommand(
   }
 
   const service = resolveLaunchdServiceInfo(context.cwd);
-  const bootstrap = await runner(["bootstrap", service.domain, service.plistPath]);
+  await installLaunchdPlist(service);
+  const bootstrap = await runner(["bootstrap", service.domain, service.installedPlistPath]);
   const alreadyLoaded = bootstrap.code !== 0 && (isAlreadyLoaded(bootstrap.stderr) || (await isLoadedService(service, runner)));
   if (bootstrap.code !== 0 && !alreadyLoaded) {
     return failure("failed to bootstrap launchd service", service, bootstrap);
@@ -48,7 +51,8 @@ export async function runStartCommand(
     message: "service started",
     details: {
       serviceTarget: service.serviceTarget,
-      plistPath: service.plistPath
+      plistPath: service.installedPlistPath,
+      sourcePlistPath: service.sourcePlistPath
     }
   };
 }
@@ -123,7 +127,8 @@ function failure(message: string, service: ReturnType<typeof resolveLaunchdServi
     message,
     details: {
       serviceTarget: service.serviceTarget,
-      plistPath: service.plistPath,
+      plistPath: service.installedPlistPath,
+      sourcePlistPath: service.sourcePlistPath,
       code: result.code,
       stderr: truncate(result.stderr),
       stdout: truncate(result.stdout)
@@ -140,4 +145,20 @@ function truncate(value: string, limit = 400): string {
     return text;
   }
   return `${text.slice(0, limit)}...`;
+}
+
+async function installLaunchdPlist(service: ReturnType<typeof resolveLaunchdServiceInfo>): Promise<void> {
+  await fs.mkdir(service.supportRoot, { recursive: true });
+  const supervisorContent = await fs.readFile(service.sourceSupervisorPath, "utf8");
+  await fs.writeFile(service.managedSupervisorPath, supervisorContent, "utf8");
+  await fs.chmod(service.managedSupervisorPath, 0o755);
+
+  const wrapperContent = renderManagedLaunchdWrapper(service);
+  await fs.writeFile(service.managedWrapperPath, wrapperContent, "utf8");
+  await fs.chmod(service.managedWrapperPath, 0o755);
+
+  const plistContent = renderLaunchdPlist(service);
+  await fs.mkdir(path.dirname(service.installedPlistPath), { recursive: true });
+  await fs.writeFile(service.installedPlistPath, plistContent, "utf8");
+  await fs.chmod(service.installedPlistPath, 0o600);
 }
