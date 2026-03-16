@@ -87,6 +87,25 @@ describe("cli service commands", () => {
     expect(calls.length).toBe(3);
   });
 
+  test("start returns error when launchd support files are missing", async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-start-missing-"));
+    tempDirs.push(cwd);
+    const fakeHome = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-home-"));
+    tempDirs.push(fakeHome);
+    process.env.HOME = fakeHome;
+
+    const calls: string[][] = [];
+    const result = await runStartCommand([], { cwd, now: new Date() }, async (args) => {
+      calls.push(args);
+      return { code: 0, stdout: "", stderr: "" };
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toBe("failed to prepare launchd service files");
+    expect(String(result.details?.error ?? "")).toContain("restart-supervisor.sh");
+    expect(calls).toEqual([]);
+  });
+
   test("start tolerates launchctl bootstrap I/O error when service is already loaded", async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), "dc-bridge-service-start-"));
     tempDirs.push(cwd);
