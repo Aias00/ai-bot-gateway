@@ -42,15 +42,15 @@ export async function runStartCommand(
       }
     };
   }
+  const enable = await runner(["enable", service.serviceTarget]);
+  if (enable.code !== 0) {
+    return failure("failed to enable launchd service", service, enable);
+  }
+
   const bootstrap = await runner(["bootstrap", service.domain, service.installedPlistPath]);
   const alreadyLoaded = bootstrap.code !== 0 && (isAlreadyLoaded(bootstrap.stderr) || (await isLoadedService(service, runner)));
   if (bootstrap.code !== 0 && !alreadyLoaded) {
     return failure("failed to bootstrap launchd service", service, bootstrap);
-  }
-
-  const enable = await runner(["enable", service.serviceTarget]);
-  if (enable.code !== 0) {
-    return failure("failed to enable launchd service", service, enable);
   }
 
   const kickstart = await runner(["kickstart", "-k", service.serviceTarget]);

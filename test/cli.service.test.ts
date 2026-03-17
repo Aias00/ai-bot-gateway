@@ -63,8 +63,8 @@ describe("cli service commands", () => {
     expect(result.ok).toBe(true);
     expect(result.message).toBe("service started");
     expect(calls).toEqual([
-      ["bootstrap", domain, installedPlistPath],
       ["enable", `${domain}/com.agent.gateway`],
+      ["bootstrap", domain, installedPlistPath],
       ["kickstart", "-k", `${domain}/com.agent.gateway`]
     ]);
     const installedPlist = await fs.readFile(installedPlistPath, "utf8");
@@ -88,7 +88,7 @@ describe("cli service commands", () => {
     const result = await runStartCommand([], { cwd, now: new Date() }, async (args) => {
       calls.push(args);
       invocation += 1;
-      if (invocation === 1) {
+      if (invocation === 2) {
         return { code: 5, stdout: "", stderr: "service already loaded" };
       }
       return { code: 0, stdout: "", stderr: "" };
@@ -130,10 +130,10 @@ describe("cli service commands", () => {
     const result = await runStartCommand([], { cwd, now: new Date() }, async (args) => {
       calls.push(args);
       invocation += 1;
-      if (invocation === 1) {
+      if (invocation === 2) {
         return { code: 5, stdout: "", stderr: "Bootstrap failed: 5: Input/output error" };
       }
-      if (invocation === 2) {
+      if (invocation === 3) {
         return { code: 0, stdout: "service loaded", stderr: "" };
       }
       return { code: 0, stdout: "", stderr: "" };
@@ -141,13 +141,13 @@ describe("cli service commands", () => {
 
     expect(result.ok).toBe(true);
     expect(calls).toEqual([
+      ["enable", `gui/${typeof process.getuid === "function" ? process.getuid() : 0}/com.agent.gateway`],
       [
         "bootstrap",
         `gui/${typeof process.getuid === "function" ? process.getuid() : 0}`,
         resolveInstalledLaunchdPlistPath("com.agent.gateway")
       ],
       ["print", `gui/${typeof process.getuid === "function" ? process.getuid() : 0}/com.agent.gateway`],
-      ["enable", `gui/${typeof process.getuid === "function" ? process.getuid() : 0}/com.agent.gateway`],
       ["kickstart", "-k", `gui/${typeof process.getuid === "function" ? process.getuid() : 0}/com.agent.gateway`]
     ]);
   });
@@ -182,8 +182,8 @@ describe("cli service commands", () => {
     const domain = `gui/${typeof process.getuid === "function" ? process.getuid() : 0}`;
     expect(result.ok).toBe(true);
     expect(calls).toEqual([
-      ["bootstrap", domain, resolveInstalledLaunchdPlistPath("com.agent.gateway")],
       ["enable", `${domain}/com.agent.gateway`],
+      ["bootstrap", domain, resolveInstalledLaunchdPlistPath("com.agent.gateway")],
       ["kickstart", "-k", `${domain}/com.agent.gateway`],
       ["print", `${domain}/com.agent.gateway`]
     ]);
