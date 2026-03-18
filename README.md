@@ -292,7 +292,7 @@ curl -i http://127.0.0.1:8788/readyz
 | Bind | `!bind <abs-path>` | Not supported | Not supported | Binds the current Discord channel to an existing absolute path |
 | Rebind | `!rebind <abs-path>` | Not supported | Not supported | Switches the current Discord channel to a different absolute path |
 | Unbind | `!unbind` | Not supported | Not supported | Removes the current Discord channel binding |
-| Models | `!models` | `/models` | `/models` | Shows the current channel model plus configured model ids |
+| Models | `!models` | `/model-list` | `/models` | Shows the current channel model plus configured model ids |
 | Set model | `!setmodel <model>` | Not supported | Not supported | Persists a per-channel model override |
 | Clear model | `!clearmodel` | Not supported | Not supported | Removes the per-channel model override |
 | Resync | `!resync` | `/resync` | `/resync` | Re-syncs Discord managed channels |
@@ -749,7 +749,7 @@ Before enabling, set at least:
 - `!mkrepo` uses `WORKSPACE_ROOT`; it creates the project folder from the final channel name and binds the new channel without running `git init`.
 - `!mkchannel` and `!mkbind` require Discord `Manage Channels`.
 - `!bind` and `!rebind` persist the `codex-cwd:` topic tag so bindings survive restarts without editing `config/channels.json`.
-- `!models` shows the current channel model and configured model ids, which is the quickest way to discover what you can switch to.
+- `!models` shows the current channel model and configured model ids, which is the quickest way to discover what you can switch to. Discord slash users can use `/model-list`.
 - `!setmodel` persists a per-channel model override; `!clearmodel` removes it so the channel falls back to `defaultModel`.
 - In `workspace-write`, Git metadata roots such as `--git-dir` and `--git-common-dir` are added automatically so worktrees still function correctly.
 - `CODEX_EXTRA_WRITABLE_ROOTS` can extend writable roots when tooling stores state outside the repo.

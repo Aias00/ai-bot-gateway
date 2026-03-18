@@ -127,6 +127,9 @@ function createRuntime(overrides: Record<string, unknown> = {}) {
       switch (interaction.commandName) {
         case "status":
           return "!status";
+        case "models":
+        case "model-list":
+          return "!models";
         case "resync":
           return "!resync";
         case "rebuild":
@@ -247,11 +250,11 @@ describe("discord runtime slash commands", () => {
     expect(replies).toEqual(["make-channel repo-two"]);
   });
 
-  test("handles /models without requiring existing repo context", async () => {
+  test("handles /model-list without requiring existing repo context", async () => {
     const { runtime, calls } = createRuntime({
       resolveRepoContext: () => null
     });
-    const { interaction, replies } = createInteraction("models");
+    const { interaction, replies } = createInteraction("model-list");
 
     await runtime.handleInteraction(interaction);
 

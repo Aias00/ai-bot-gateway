@@ -421,7 +421,7 @@ export function createCommandRouter(deps) {
     }
     lines.push(`\`${prefix}setpath <abs-path>\` bind this chat to an existing repo path`);
     lines.push(`\`${prefix}agents\` show configured agents and current selection`);
-    lines.push(`\`${prefix}models\` show current and configured model ids`);
+    lines.push(`\`${prefix}models\` show current and configured model ids (Discord slash: \`/model-list\`)`);
     lines.push(`\`${prefix}ask <prompt>\` send prompt in this repo channel`);
     lines.push(`\`${prefix}status\` show queue/thread status for this channel`);
     lines.push(`\`${prefix}new\` reset Codex thread binding for this channel`);

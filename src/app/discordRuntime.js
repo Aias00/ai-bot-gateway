@@ -252,7 +252,7 @@ export function createDiscordRuntime(deps) {
       return;
     }
 
-    if (interaction.commandName === "models") {
+    if (interaction.commandName === "models" || interaction.commandName === "model-list") {
       const context = resolveRepoContext(message, {
         channelSetups: getChannelSetups(),
         config,

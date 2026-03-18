@@ -21,7 +21,7 @@ export function buildSlashCommandPayloads() {
     new SlashCommandBuilder().setName("interrupt").setDescription("Interrupt the active turn in this channel"),
     new SlashCommandBuilder().setName("where").setDescription("Show runtime paths and current channel binding"),
     new SlashCommandBuilder().setName("agents").setDescription("Show configured agents and current selection"),
-    new SlashCommandBuilder().setName("models").setDescription("Show current and configured model ids"),
+    new SlashCommandBuilder().setName("model-list").setDescription("Show current and configured model ids"),
     new SlashCommandBuilder()
       .setName("setpath")
       .setDescription("Bind this chat to an existing repo path")
@@ -126,6 +126,7 @@ export function buildCommandTextFromInteraction(interaction) {
       return "!where";
     case "agents":
       return "!agents";
+    case "model-list":
     case "models":
       return "!models";
     case "setpath":

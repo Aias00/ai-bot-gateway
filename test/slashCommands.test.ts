@@ -28,7 +28,7 @@ describe("slash commands", () => {
       "interrupt",
       "where",
       "agents",
-      "models",
+      "model-list",
       "setpath",
       "bind",
       "rebind",
@@ -88,7 +88,7 @@ describe("slash commands", () => {
     ).toBe("!setagent claude");
     expect(buildCommandTextFromInteraction({ commandName: "clearagent", options: createOptions() })).toBe("!clearagent");
     expect(buildCommandTextFromInteraction({ commandName: "agents", options: createOptions() })).toBe("!agents");
-    expect(buildCommandTextFromInteraction({ commandName: "models", options: createOptions() })).toBe("!models");
+    expect(buildCommandTextFromInteraction({ commandName: "model-list", options: createOptions() })).toBe("!models");
     expect(buildCommandTextFromInteraction({ commandName: "initrepo", options: createOptions({ force: true }) })).toBe(
       "!initrepo force"
     );
