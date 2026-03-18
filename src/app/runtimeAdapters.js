@@ -33,6 +33,10 @@ export function createRuntimeAdapters(deps) {
     await getRequiredRuntime("runtimeOps").maybeCompletePendingRestartNotice();
   }
 
+  async function announceStartup(readiness) {
+    await getRequiredRuntime("runtimeOps").announceStartup({ readiness });
+  }
+
   function shouldHandleAsSelfRestartRequest(content) {
     return getRequiredRuntime("runtimeOps").shouldHandleAsSelfRestartRequest(content);
   }
@@ -177,6 +181,7 @@ export function createRuntimeAdapters(deps) {
     writeHeartbeatFile,
     requestSelfRestartFromDiscord,
     maybeCompletePendingRestartNotice,
+    announceStartup,
     shouldHandleAsSelfRestartRequest,
     handleMessage,
     handleInteraction,

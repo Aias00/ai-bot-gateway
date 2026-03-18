@@ -46,6 +46,7 @@ export function loadRuntimeEnv() {
     attachmentIssueLimitPerTurn,
     heartbeatIntervalMs,
     feishuStreamMinChars,
+    feishuEventDedupeTtlMs,
     backendHttpPort,
     feishuPort
   } = parseRuntimeNumericConfig(process.env);
@@ -60,6 +61,12 @@ export function loadRuntimeEnv() {
   const restartAckPath = path.resolve(process.env.DISCORD_RESTART_ACK_PATH ?? "data/restart-ack.json");
   const restartNoticePath = path.resolve(
     process.env.DISCORD_RESTART_NOTICE_PATH ?? "data/restart-discord-notice.json"
+  );
+  const restartLifecycleStatePath = path.resolve(
+    process.env.DISCORD_RESTART_LIFECYCLE_STATE_PATH ?? "data/restart-lifecycle-state.json"
+  );
+  const restartLifecycleLogPath = path.resolve(
+    process.env.DISCORD_RESTART_LIFECYCLE_LOG_PATH ?? "data/restart-lifecycle.log"
   );
   const inFlightRecoveryPath = path.resolve(process.env.DISCORD_INFLIGHT_RECOVERY_PATH ?? "data/inflight-turns.json");
   const turnRecovery = parseTurnRecoveryConfig(process.env);
@@ -84,6 +91,9 @@ export function loadRuntimeEnv() {
   const feishuGeneralDefaultCwd = path.join(os.tmpdir(), "agent-gateway", "feishu-general");
   const feishuGeneralCwd = path.resolve(process.env.FEISHU_GENERAL_CWD ?? feishuGeneralDefaultCwd);
   const feishuGeneralRouteId = feishuGeneralChatId ? makeFeishuRouteId(feishuGeneralChatId) : "";
+  const restartNotifyRouteId =
+    String(process.env.DISCORD_RESTART_NOTIFY_ROUTE_ID ?? "").trim() || generalChannelId || feishuGeneralRouteId || "";
+  const feishuEventDedupePath = path.resolve(process.env.FEISHU_EVENT_DEDUPE_PATH ?? "data/feishu-seen-events.json");
   const feishuRequireMentionInGroup = process.env.FEISHU_REQUIRE_MENTION_IN_GROUP !== "0";
   const feishuSegmentedStreaming = process.env.FEISHU_SEGMENTED_STREAMING === "1";
   const feishuUnboundChatMode = normalizeFeishuUnboundChatMode(process.env.FEISHU_UNBOUND_CHAT_MODE);
@@ -117,6 +127,9 @@ export function loadRuntimeEnv() {
     restartRequestPath,
     restartAckPath,
     restartNoticePath,
+    restartLifecycleStatePath,
+    restartLifecycleLogPath,
+    restartNotifyRouteId,
     inFlightRecoveryPath,
     turnRecovery,
     exitOnRestartAck,
@@ -142,6 +155,8 @@ export function loadRuntimeEnv() {
     feishuRequireMentionInGroup,
     feishuSegmentedStreaming,
     feishuStreamMinChars,
+    feishuEventDedupeTtlMs,
+    feishuEventDedupePath,
     feishuUnboundChatMode,
     feishuUnboundChatCwd
   };

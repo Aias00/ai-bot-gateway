@@ -5,7 +5,7 @@ describe("signal handlers", () => {
   test("registers process shutdown signal handlers only", () => {
     const originalOn = process.on.bind(process);
     const handlers = new Map<string, (...args: unknown[]) => void>();
-    const calls: number[] = [];
+    const calls: Array<{ exitCode: number; metadata: unknown }> = [];
 
     process.on = ((event: string, listener: (...args: unknown[]) => void) => {
       handlers.set(event, listener);
@@ -13,8 +13,8 @@ describe("signal handlers", () => {
     }) as typeof process.on;
 
     try {
-      registerShutdownSignals((exitCode: number) => {
-        calls.push(exitCode);
+      registerShutdownSignals((exitCode: number, metadata: unknown) => {
+        calls.push({ exitCode, metadata });
       });
       handlers.get("SIGINT")?.();
       handlers.get("SIGTERM")?.();
@@ -26,6 +26,9 @@ describe("signal handlers", () => {
     expect(handlers.has("SIGTERM")).toBe(true);
     expect(handlers.has("unhandledRejection")).toBe(false);
     expect(handlers.has("uncaughtException")).toBe(false);
-    expect(calls).toEqual([0, 0]);
+    expect(calls).toEqual([
+      { exitCode: 0, metadata: { reason: "signal", signal: "SIGINT" } },
+      { exitCode: 0, metadata: { reason: "signal", signal: "SIGTERM" } }
+    ]);
   });
 });

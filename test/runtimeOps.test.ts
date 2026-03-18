@@ -25,6 +25,8 @@ async function makeRuntimeOps(overrides: { processStartedAt?: string; exitOnRest
   const restartRequestPath = path.join(base, "restart-request.json");
   const restartAckPath = path.join(base, "restart-ack.json");
   const restartNoticePath = path.join(base, "restart-notice.json");
+  const restartLifecycleStatePath = path.join(base, "restart-lifecycle-state.json");
+  const restartLifecycleLogPath = path.join(base, "restart-lifecycle.log");
   const shutdownCalls: number[] = [];
 
   const runtimeOps = createRuntimeOps({
@@ -37,6 +39,9 @@ async function makeRuntimeOps(overrides: { processStartedAt?: string; exitOnRest
     restartRequestPath,
     restartAckPath,
     restartNoticePath,
+    restartLifecycleStatePath,
+    restartLifecycleLogPath,
+    restartNotifyRouteId: "",
     processStartedAt: overrides.processStartedAt ?? "2026-03-13T00:00:00.000Z",
     heartbeatIntervalMs: 30_000,
     exitOnRestartAck: overrides.exitOnRestartAck ?? false,

@@ -95,11 +95,17 @@ export async function runBridgeProcess(context) {
     stopPlatformRuntimes: () => platformRegistry?.stop?.(),
     stopHeartbeatLoop: () => runtimeContainer.requireRef("runtimeOps").stopHeartbeatLoop()
   });
-  runtimeContainer.setRef("shutdown", async (exitCode) => {
+  runtimeContainer.setRef("shutdown", async (exitCode, metadata = {}) => {
     if (runtimeContainer.getPhase() !== runtimeContainer.RuntimePhase.SHUTTING_DOWN) {
       runtimeContainer.transitionTo(runtimeContainer.RuntimePhase.SHUTTING_DOWN);
       logRuntimeSnapshot(runtimeContainer, "shutting_down");
     }
+    await runtimeContainer
+      .requireRef("runtimeOps")
+      .recordShutdown({
+        exitCode,
+        ...(metadata && typeof metadata === "object" ? metadata : {})
+      });
     await shutdownImpl(exitCode);
   });
   registerRuntimeErrorGuards({
@@ -111,6 +117,7 @@ export async function runBridgeProcess(context) {
     generalChannelCwd,
     platformRegistry,
     maybeCompletePendingRestartNotice: runtimeAdapters.maybeCompletePendingRestartNotice,
+    announceStartup: runtimeAdapters.announceStartup,
     turnRecoveryStore,
     safeSendToChannel,
     fetchChannelByRouteId,

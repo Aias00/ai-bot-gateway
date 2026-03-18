@@ -35,12 +35,24 @@ export function createFeishuRuntime(deps) {
     feishuGeneralChatId,
     feishuGeneralCwd,
     feishuRequireMentionInGroup,
+    feishuEventDedupePath,
+    feishuEventDedupeTtlMs,
     feishuUnboundChatMode,
     feishuUnboundChatCwd
   } = runtimeEnv;
   const seenEventIds = new Map();
   const sentMessages = new Map();
   const recentOutgoingTextByChat = new Map();
+  const inboundMessageChainsByRoute = new Map();
+  let persistSeenEventsTimer = null;
+  const seenEventsPersistPath =
+    typeof feishuEventDedupePath === "string" && feishuEventDedupePath.trim()
+      ? feishuEventDedupePath
+      : "";
+  const seenEventsTtlMs =
+    Number.isFinite(feishuEventDedupeTtlMs) && feishuEventDedupeTtlMs > 0
+      ? feishuEventDedupeTtlMs
+      : 24 * 60 * 60 * 1000;
   const transport = normalizeFeishuTransport(feishuTransport);
   const proxyUrl = getProxyUrl();
   const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : null;
@@ -106,7 +118,7 @@ export function createFeishuRuntime(deps) {
     const eventType = String(payload?.header?.event_type ?? "");
     const eventId = String(payload?.header?.event_id ?? payload?.event_id ?? "").trim();
     if (eventType === "im.message.receive_v1") {
-      await processMessageReceiveEvent(payload?.event, { eventId });
+      await processMessageReceiveEventOrdered(payload?.event, { eventId });
       return;
     }
     if (eventType === "im.chat.member.bot.added_v1") {
@@ -116,7 +128,7 @@ export function createFeishuRuntime(deps) {
 
   async function processMessageReceiveEvent(event, options = {}) {
     const eventId = String(options?.eventId ?? "").trim() || buildLongConnectionEventId(event);
-    if (eventId && markEventSeen(eventId)) {
+    if (eventId && (await markEventSeen(eventId))) {
       return;
     }
 
@@ -315,11 +327,31 @@ export function createFeishuRuntime(deps) {
     });
   }
 
+  async function processMessageReceiveEventOrdered(event, options = {}) {
+    const chatId = String(event?.message?.chat_id ?? "").trim();
+    const routeKey = chatId ? makeFeishuRouteId(chatId) : "feishu:unknown";
+    const previous = inboundMessageChainsByRoute.get(routeKey) ?? Promise.resolve();
+    const current = previous
+      .catch(() => {})
+      .then(async () => {
+        await processMessageReceiveEvent(event, options);
+      });
+
+    inboundMessageChainsByRoute.set(routeKey, current);
+    try {
+      await current;
+    } finally {
+      if (inboundMessageChainsByRoute.get(routeKey) === current) {
+        inboundMessageChainsByRoute.delete(routeKey);
+      }
+    }
+  }
+
   async function processBotAddedEvent(event, options = {}) {
     const eventId =
       String(options?.eventId ?? "").trim() ||
       buildLongConnectionChatEventId("bot-added", event?.chat_id, event?.operator_id?.open_id);
-    if (eventId && markEventSeen(eventId)) {
+    if (eventId && (await markEventSeen(eventId))) {
       return;
     }
 
@@ -409,6 +441,8 @@ export function createFeishuRuntime(deps) {
       };
     }
 
+    await loadSeenEventsFromDisk();
+
     if (!isFeishuLongConnectionTransport(transport)) {
       return {
         started: true,
@@ -446,7 +480,7 @@ export function createFeishuRuntime(deps) {
       loggerLevel: feishuSdk.LoggerLevel?.warn
     }).register({
       "im.message.receive_v1": async (event) => {
-        await processMessageReceiveEvent(event, {
+        await processMessageReceiveEventOrdered(event, {
           eventId: String(event?.event_id ?? "")
         });
       },
@@ -466,6 +500,11 @@ export function createFeishuRuntime(deps) {
   }
 
   function stop() {
+    flushSeenEventsToDisk().catch(() => {});
+    if (persistSeenEventsTimer) {
+      clearTimeout(persistSeenEventsTimer);
+      persistSeenEventsTimer = null;
+    }
     wsClient?.close?.({ force: true });
     wsClient = null;
   }
@@ -891,10 +930,10 @@ export function createFeishuRuntime(deps) {
     return String(payload?.type ?? "").trim() === "url_verification" && typeof payload?.challenge === "string";
   }
 
-  function markEventSeen(eventId) {
+  async function markEventSeen(eventId) {
     const now = Date.now();
     for (const [key, timestamp] of seenEventIds.entries()) {
-      if (now - timestamp > 10 * 60_000) {
+      if (now - timestamp > seenEventsTtlMs) {
         seenEventIds.delete(key);
       }
     }
@@ -902,7 +941,71 @@ export function createFeishuRuntime(deps) {
       return true;
     }
     seenEventIds.set(eventId, now);
+    schedulePersistSeenEvents();
     return false;
+  }
+
+  function schedulePersistSeenEvents() {
+    if (persistSeenEventsTimer) {
+      return;
+    }
+    persistSeenEventsTimer = setTimeout(() => {
+      persistSeenEventsTimer = null;
+      void flushSeenEventsToDisk();
+    }, 1_000);
+    if (typeof persistSeenEventsTimer.unref === "function") {
+      persistSeenEventsTimer.unref();
+    }
+  }
+
+  async function loadSeenEventsFromDisk() {
+    if (!seenEventsPersistPath) {
+      return;
+    }
+    try {
+      const raw = await fs.readFile(seenEventsPersistPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const entries = Array.isArray(parsed?.events) ? parsed.events : [];
+      const now = Date.now();
+      for (const entry of entries) {
+        const id = String(entry?.id ?? "").trim();
+        const seenAt = Number(entry?.seenAt ?? 0);
+        if (!id || !Number.isFinite(seenAt)) {
+          continue;
+        }
+        if (now - seenAt > seenEventsTtlMs) {
+          continue;
+        }
+        seenEventIds.set(id, seenAt);
+      }
+    } catch {
+      // ignore missing/corrupt cache file
+    }
+  }
+
+  async function flushSeenEventsToDisk() {
+    if (!seenEventsPersistPath) {
+      return;
+    }
+    const now = Date.now();
+    const compactEntries = [];
+    for (const [id, seenAt] of seenEventIds.entries()) {
+      if (now - seenAt > seenEventsTtlMs) {
+        seenEventIds.delete(id);
+        continue;
+      }
+      compactEntries.push({ id, seenAt });
+    }
+    const payload = {
+      updatedAt: new Date().toISOString(),
+      ttlMs: seenEventsTtlMs,
+      events: compactEntries.slice(-20_000)
+    };
+    const dir = path.dirname(seenEventsPersistPath);
+    await fs.mkdir(dir, { recursive: true }).catch(() => {});
+    const tempPath = `${seenEventsPersistPath}.tmp`;
+    await fs.writeFile(tempPath, JSON.stringify(payload), "utf8").catch(() => {});
+    await fs.rename(tempPath, seenEventsPersistPath).catch(() => {});
   }
 
   function rememberOutgoingText(chatId, text) {

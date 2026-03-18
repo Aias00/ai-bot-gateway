@@ -345,8 +345,19 @@ Use `.env.example` as the exhaustive reference. The most important variables are
 | `CHANNEL_CONFIG_PATH` | `config/channels.json` override |
 | `STATE_PATH` | Thread-binding state file path |
 | `DISCORD_HEARTBEAT_PATH` | Heartbeat JSON file path |
+| `DISCORD_RESTART_LIFECYCLE_STATE_PATH` | Lifecycle state marker path (default `data/restart-lifecycle-state.json`) |
+| `DISCORD_RESTART_LIFECYCLE_LOG_PATH` | Lifecycle event log path (default `data/restart-lifecycle.log`) |
+| `DISCORD_RESTART_NOTIFY_ROUTE_ID` | Optional route id for startup/restart notices (`discord_channel_id` or `feishu:<chat_id>`) |
 | `DISCORD_STDOUT_LOG_PATH` | CLI log override for stdout |
 | `DISCORD_STDERR_LOG_PATH` | CLI log override for stderr |
+| `DISCORD_LOG_ROTATE_MAX_BYTES` | Max bytes per stdout/stderr log file before rotation (default `10485760`) |
+| `DISCORD_LOG_ROTATE_MAX_FILES` | Number of rotated files to retain per stream (default `5`) |
+| `RESTART_MAX_ATTEMPTS_WINDOW` | Max restarts allowed in `RESTART_WINDOW_SECONDS` before cooldown (default `6`) |
+| `RESTART_WINDOW_SECONDS` | Sliding window for restart storm detection (default `300`) |
+| `RESTART_COOLDOWN_SECONDS` | Cooldown sleep when restart storm is detected (default `120`) |
+| `FEISHU_EVENT_DEDUPE_PATH` | Persistent dedupe cache for Feishu event IDs (default `data/feishu-seen-events.json`) |
+| `FEISHU_EVENT_DEDUPE_TTL_MS` | TTL for Feishu dedupe event cache (default `86400000`) |
+| `CONFIG_GOVERNANCE_MODE` | `strict` (default) or `warn`; strict mode aborts startup on invalid ops config |
 | `HTTP_PROXY` / `HTTPS_PROXY` | Optional upstream proxy for Discord/Codex web traffic |
 
 ### `config/channels.json`
@@ -450,6 +461,9 @@ Env precedence:
 | `data/restart-request.json` | Requested restarts from chat/CLI |
 | `data/restart-ack.json` | Supervisor acknowledgement of a restart request |
 | `data/restart-discord-notice.json` | Deferred restart notice bookkeeping |
+| `data/restart-lifecycle-state.json` | Last startup/shutdown lifecycle marker with reason metadata |
+| `data/restart-lifecycle.log` | Append-only lifecycle timeline (startup/restart/shutdown events) |
+| `data/restart-supervisor.log` | Supervisor-side restart timeline from `scripts/restart-supervisor.sh` |
 | `data/inflight-turns.json` | Recovery metadata for active turns across restarts |
 
 Practical distinction:
@@ -649,9 +663,11 @@ Notes:
 Default log files:
 
 ```bash
-/tmp/agent-gateway.out.log
-/tmp/agent-gateway.err.log
+./data/logs/bridge.stdout.log
+./data/logs/bridge.stderr.log
 ```
+
+By default the supervisor rotates logs by size (`10 MiB` per file, `5` retained files), writes structured restart events to `data/restart-supervisor.log`, and applies restart-storm protection (window + cooldown).
 
 ### Linux `systemd`
 

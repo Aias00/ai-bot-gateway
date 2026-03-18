@@ -13,14 +13,14 @@
 	<string>com.agent.gateway</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/Volumes/data/agent-bot-gateway/scripts/launchd-wrapper.sh</string>
+		<string>/Users/aias/.openclaw/bin/agent-gateway-wrapper.sh</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>/tmp/agent-gateway.err.log</string>
+	<string>/Volumes/data/agent-bot-gateway/data/logs/launchd.stderr.log</string>
 	<key>StandardOutPath</key>
-	<string>/tmp/agent-gateway.out.log</string>
+	<string>/Volumes/data/agent-bot-gateway/data/logs/launchd.stdout.log</string>
 	<key>ThrottleInterval</key>
 	<integer>15</integer>
 	<key>WorkingDirectory</key>

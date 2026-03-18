@@ -59,7 +59,7 @@ function shouldGracefullyShutdownForRejection(reason) {
 
 function terminateProcess({ processRef, shutdown }) {
   if (typeof shutdown === "function") {
-    void shutdown(1);
+    void shutdown(1, { reason: "runtime_error" });
     return;
   }
 

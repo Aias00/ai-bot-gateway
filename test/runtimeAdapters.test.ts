@@ -23,6 +23,9 @@ function makeAdapters(overrides: Record<string, unknown> = {}) {
       void discordClient;
       calls.push({ type: "completeNotice", payload: null });
     },
+    announceStartup: async ({ readiness }: { readiness?: { ready?: boolean } }) => {
+      calls.push({ type: "announceStartup", payload: readiness ?? null });
+    },
     shouldHandleAsSelfRestartRequest: (content: string) => {
       void content;
       return true;
@@ -146,6 +149,7 @@ describe("runtime adapters", () => {
     await adapters.writeHeartbeatFile();
     await adapters.requestSelfRestartFromDiscord(message, "manual");
     await adapters.maybeCompletePendingRestartNotice();
+    await adapters.announceStartup({ ready: true });
     expect(adapters.shouldHandleAsSelfRestartRequest("please restart")).toBe(true);
 
     await adapters.handleMessage(message);
@@ -172,6 +176,7 @@ describe("runtime adapters", () => {
     expect(calls.some((entry) => entry.type === "writeHeartbeat")).toBe(true);
     expect(calls.some((entry) => entry.type === "restart")).toBe(true);
     expect(calls.some((entry) => entry.type === "completeNotice")).toBe(true);
+    expect(calls.some((entry) => entry.type === "announceStartup")).toBe(true);
     expect(calls.some((entry) => entry.type === "collect")).toBe(true);
     expect(calls.some((entry) => entry.type === "buildInput")).toBe(true);
     expect(calls.some((entry) => entry.type === "enqueue")).toBe(true);

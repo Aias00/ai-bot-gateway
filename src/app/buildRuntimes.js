@@ -67,7 +67,9 @@ export function buildBridgeRuntimes(deps) {
     feishuUnboundChatCwd,
     feishuRequireMentionInGroup,
     feishuSegmentedStreaming,
-    feishuStreamMinChars
+    feishuStreamMinChars,
+    feishuEventDedupeTtlMs,
+    feishuEventDedupePath
   } = runtimeEnv;
   const { getChannelSetups, setChannelSetups } = channelSetupStore;
   const {
@@ -189,7 +191,11 @@ export function buildBridgeRuntimes(deps) {
       feishuGeneralCwd,
       feishuUnboundChatMode,
       feishuUnboundChatCwd,
-      feishuRequireMentionInGroup
+      feishuRequireMentionInGroup,
+      feishuSegmentedStreaming,
+      feishuStreamMinChars,
+      feishuEventDedupeTtlMs,
+      feishuEventDedupePath
     },
     getChannelSetups,
     bootstrapChannelMappings,

@@ -4,6 +4,7 @@ import { startBridgeRuntime } from "../src/app/startup.js";
 describe("startup runtime", () => {
   test("marks backend unready when an enabled platform fails startup", async () => {
     const readyUpdates = [];
+    const startupAnnouncements = [];
 
     await startBridgeRuntime({
       codex: {
@@ -34,6 +35,9 @@ describe("startup runtime", () => {
         }
       },
       maybeCompletePendingRestartNotice: async () => {},
+      announceStartup: async (readiness) => {
+        startupAnnouncements.push(readiness);
+      },
       turnRecoveryStore: {
         async reconcilePending() {
           return {
@@ -56,6 +60,18 @@ describe("startup runtime", () => {
 
     expect(readyUpdates).toEqual([
       false,
+      {
+        ready: false,
+        degradedPlatforms: [
+          {
+            platformId: "discord",
+            reason: "startup_failed",
+            message: "discord startup timed out"
+          }
+        ]
+      }
+    ]);
+    expect(startupAnnouncements).toEqual([
       {
         ready: false,
         degradedPlatforms: [

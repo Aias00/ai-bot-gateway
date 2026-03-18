@@ -13,6 +13,7 @@ const RUNTIME_NUMERIC_DEFAULTS = {
   attachmentIssueLimitPerTurn: 1,
   heartbeatIntervalMs: 30_000,
   feishuStreamMinChars: 80,
+  feishuEventDedupeTtlMs: 24 * 60 * 60 * 1000,
   backendHttpPort: 8788,
   feishuPort: 8788
 };
@@ -25,6 +26,7 @@ const RUNTIME_NUMERIC_LIMITS = {
   attachmentIssueLimitPerTurn: { min: 0 },
   heartbeatIntervalMs: { min: 5_000 },
   feishuStreamMinChars: { min: 1 },
+  feishuEventDedupeTtlMs: { min: 60_000 },
   backendHttpPort: { min: 1 },
   feishuPort: { min: 1 }
 };
@@ -105,6 +107,11 @@ export function parseRuntimeNumericConfig(env = process.env) {
       env.FEISHU_STREAM_MIN_CHARS,
       RUNTIME_NUMERIC_DEFAULTS.feishuStreamMinChars,
       RUNTIME_NUMERIC_LIMITS.feishuStreamMinChars.min
+    ),
+    feishuEventDedupeTtlMs: parseBoundedInt(
+      env.FEISHU_EVENT_DEDUPE_TTL_MS,
+      RUNTIME_NUMERIC_DEFAULTS.feishuEventDedupeTtlMs,
+      RUNTIME_NUMERIC_LIMITS.feishuEventDedupeTtlMs.min
     ),
     backendHttpPort: parseBoundedInt(
       backendPortRaw,

@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { loadConfig } from "../config/loadConfig.js";
+import { enforceOperationalConfig } from "../config/governance.js";
 import { loadRuntimeEnv } from "../config/runtimeEnv.js";
 import { StateStore } from "../stateStore.js";
 import { createDebugLog } from "./runtimeUtils.js";
@@ -16,6 +17,13 @@ export async function loadRuntimeBootstrapConfig() {
   );
   if (!discordToken && !feishuEnabled) {
     console.error("Missing chat platform credentials. Set DISCORD_BOT_TOKEN or FEISHU_APP_ID + FEISHU_APP_SECRET.");
+    process.exit(1);
+  }
+
+  try {
+    enforceOperationalConfig(process.env);
+  } catch (error) {
+    console.error(error?.message ?? String(error));
     process.exit(1);
   }
 

@@ -4,6 +4,7 @@ export async function startBridgeRuntime({
   generalChannelCwd,
   platformRegistry,
   maybeCompletePendingRestartNotice,
+  announceStartup,
   turnRecoveryStore,
   safeSendToChannel,
   fetchChannelByRouteId,
@@ -65,6 +66,9 @@ export async function startBridgeRuntime({
     }
   }
   await maybeCompletePendingRestartNotice();
+  if (typeof announceStartup === "function") {
+    await announceStartup(readiness);
+  }
   try {
     const recovery = await turnRecoveryStore.reconcilePending({
       fetchChannelByRouteId,

@@ -12,6 +12,93 @@ afterEach(() => {
 });
 
 describe("feishu runtime", () => {
+  test("does not raise unhandled rejection when event dedupe path is missing", async () => {
+    const replies: string[] = [];
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/tenant_access_token/internal")) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: "tenant-token", expire: 7200 }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      replies.push(body.content ?? "");
+      return new Response(JSON.stringify({ code: 0, data: { message_id: "om_reply_no_dedupe_path" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      });
+    };
+
+    const runtime = createFeishuRuntime({
+      config: {
+        defaultModel: "gpt-5.3-codex",
+        sandboxMode: "workspace-write",
+        allowedFeishuUserIds: []
+      },
+      runtimeEnv: {
+        feishuEnabled: true,
+        feishuAppId: "cli_test",
+        feishuAppSecret: "secret",
+        feishuVerificationToken: "",
+        feishuPort: 8788,
+        feishuHost: "127.0.0.1",
+        feishuWebhookPath: "/feishu/events",
+        feishuGeneralChatId: "",
+        feishuGeneralCwd: "/tmp/general",
+        feishuRequireMentionInGroup: false
+      },
+      getChannelSetups: () => ({}),
+      runManagedRouteCommand: async () => {},
+      getHelpText: () => "help text",
+      isCommandSupportedForPlatform: () => false,
+      handleCommand: async () => {},
+      runtimeAdapters: {
+        buildTurnInputFromMessage: async () => [],
+        enqueuePrompt: () => {}
+      },
+      safeReply: async (message: { reply: (text: string) => Promise<unknown> }, content: string) => await message.reply(content)
+    });
+
+    const unhandledRejections: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandledRejections.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      await runtime.handleEventPayload({
+        header: {
+          event_id: "evt-no-dedupe-path-1",
+          event_type: "im.message.receive_v1"
+        },
+        event: {
+          sender: {
+            sender_id: { open_id: "ou_no_dedupe_path_1" },
+            sender_type: "user"
+          },
+          message: {
+            message_id: "om_no_dedupe_path_1",
+            chat_id: "oc_no_dedupe_path_1",
+            chat_type: "p2p",
+            message_type: "text",
+            content: JSON.stringify({ text: "/where" }),
+            mentions: []
+          }
+        }
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      runtime.stop();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+
+    expect(replies.length).toBe(1);
+    expect(unhandledRejections).toEqual([]);
+  });
+
   test("returns identifiers for /where before a chat is bound", async () => {
     const replies: string[] = [];
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {

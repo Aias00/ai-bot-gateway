@@ -15,8 +15,17 @@ export function createRuntimeOpsContext(params) {
     runtimeContainer,
     runtimeEnv
   } = params;
-  const { heartbeatPath, restartRequestPath, restartAckPath, restartNoticePath, heartbeatIntervalMs, exitOnRestartAck } =
-    runtimeEnv;
+  const {
+    heartbeatPath,
+    restartRequestPath,
+    restartAckPath,
+    restartNoticePath,
+    restartLifecycleStatePath,
+    restartLifecycleLogPath,
+    restartNotifyRouteId,
+    heartbeatIntervalMs,
+    exitOnRestartAck
+  } = runtimeEnv;
 
   return createRuntimeOps({
     fs,
@@ -28,6 +37,9 @@ export function createRuntimeOpsContext(params) {
     restartRequestPath,
     restartAckPath,
     restartNoticePath,
+    restartLifecycleStatePath,
+    restartLifecycleLogPath,
+    restartNotifyRouteId,
     processStartedAt,
     heartbeatIntervalMs,
     exitOnRestartAck,

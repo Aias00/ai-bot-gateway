@@ -5,8 +5,8 @@ import { spawnSync } from "node:child_process";
 
 const DEFAULT_LAUNCHD_LABEL = "com.agent.gateway";
 const DEFAULT_SOURCE_PLIST_FILENAME = "com.agent.gateway.plist";
-const DEFAULT_STDOUT_LOG_PATH = "/tmp/agent-gateway.out.log";
-const DEFAULT_STDERR_LOG_PATH = "/tmp/agent-gateway.err.log";
+const DEFAULT_STDOUT_LOG_PATH = "data/logs/bridge.stdout.log";
+const DEFAULT_STDERR_LOG_PATH = "data/logs/bridge.stderr.log";
 
 export interface CliRuntimePaths {
   configPath: string;
@@ -42,12 +42,12 @@ export function resolveCliRuntimePaths(cwd: string): CliRuntimePaths {
   const stdoutLogPath = resolveLogPath(
     process.env.DISCORD_STDOUT_LOG_PATH,
     plistLogPaths.stdoutLogPath,
-    DEFAULT_STDOUT_LOG_PATH
+    path.resolve(runtimeRoot, DEFAULT_STDOUT_LOG_PATH)
   );
   const stderrLogPath = resolveLogPath(
     process.env.DISCORD_STDERR_LOG_PATH,
     plistLogPaths.stderrLogPath,
-    DEFAULT_STDERR_LOG_PATH
+    path.resolve(runtimeRoot, DEFAULT_STDERR_LOG_PATH)
   );
 
   return {
@@ -93,12 +93,12 @@ export function resolveLaunchdServiceInfo(cwd: string): LaunchdServiceInfo {
   const stdoutLogPath = resolveLogPath(
     process.env.DISCORD_STDOUT_LOG_PATH,
     plistLogPaths.stdoutLogPath,
-    DEFAULT_STDOUT_LOG_PATH
+    path.resolve(runtimeRoot, DEFAULT_STDOUT_LOG_PATH)
   );
   const stderrLogPath = resolveLogPath(
     process.env.DISCORD_STDERR_LOG_PATH,
     plistLogPaths.stderrLogPath,
-    DEFAULT_STDERR_LOG_PATH
+    path.resolve(runtimeRoot, DEFAULT_STDERR_LOG_PATH)
   );
   return {
     sourcePlistPath,
@@ -226,6 +226,10 @@ export function renderManagedLaunchdWrapper(service: LaunchdServiceInfo): string
     "set -euo pipefail",
     "",
     `export PATH=${shellQuote(`${path.dirname(service.nodeBinaryPath)}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`)}`,
+    `export DISCORD_STDOUT_LOG_PATH=${shellQuote(service.stdoutLogPath)}`,
+    `export DISCORD_STDERR_LOG_PATH=${shellQuote(service.stderrLogPath)}`,
+    `export DISCORD_LOG_ROTATE_MAX_BYTES=${shellQuote(String(process.env.DISCORD_LOG_ROTATE_MAX_BYTES ?? "10485760"))}`,
+    `export DISCORD_LOG_ROTATE_MAX_FILES=${shellQuote(String(process.env.DISCORD_LOG_ROTATE_MAX_FILES ?? "5"))}`,
     `cd ${shellQuote(service.runtimeRoot)}`,
     `exec ${shellQuote(service.managedSupervisorPath)} -- ${shellQuote(service.nodeBinaryPath)} ${shellQuote(service.entryScriptPath)}`,
     ""

@@ -11,6 +11,9 @@ export function createRuntimeOps(deps) {
     restartRequestPath,
     restartAckPath,
     restartNoticePath,
+    restartLifecycleStatePath,
+    restartLifecycleLogPath,
+    restartNotifyRouteId,
     processStartedAt,
     heartbeatIntervalMs,
     exitOnRestartAck,
@@ -24,6 +27,7 @@ export function createRuntimeOps(deps) {
   let heartbeatTimer = null;
   let restartAckHandled = false;
   let restartRequestHandled = false;
+  let startupAnnounced = false;
   const selfRestartOnRequestRaw = String(process.env.DISCORD_SELF_RESTART_ON_REQUEST ?? "").trim();
   const selfRestartOnRequest = selfRestartOnRequestRaw
     ? selfRestartOnRequestRaw !== "0"
@@ -86,7 +90,11 @@ export function createRuntimeOps(deps) {
       }
       restartAckHandled = true;
       console.log(`restart ack detected at ${restartAckPath}; exiting for host-managed restart`);
-      await shutdown(0);
+      await notifyRestartInProgress({ reason: "host_restart_ack", detail: `acknowledgedAt=${acknowledgedAt}` });
+      await shutdown(0, {
+        reason: "host_restart_ack",
+        detail: `acknowledgedAt=${acknowledgedAt}`
+      });
     } catch {}
   }
 
@@ -114,6 +122,9 @@ export function createRuntimeOps(deps) {
     restartRequestHandled = true;
     console.log(`restart request detected at ${restartRequestPath}; exiting for launchd/self-managed restart`);
 
+    const requestSource = typeof parsed?.requestedBy === "string" ? parsed.requestedBy : "unknown";
+    await notifyRestartInProgress({ reason: "self_restart_request", detail: `requestedBy=${requestSource}` });
+
     await fs.mkdir(path.dirname(restartAckPath), { recursive: true }).catch(() => {});
     await fs
       .writeFile(
@@ -132,7 +143,10 @@ export function createRuntimeOps(deps) {
       )
       .catch(() => {});
     await fs.unlink(restartRequestPath).catch(() => {});
-    await shutdown(0);
+    await shutdown(0, {
+      reason: "self_restart_request",
+      detail: `requestedBy=${requestSource}`
+    });
   }
 
   async function requestSelfRestartFromDiscord(message, reason) {
@@ -187,6 +201,137 @@ export function createRuntimeOps(deps) {
     await fs.unlink(restartNoticePath).catch(() => {});
   }
 
+  async function appendLifecycleLog(event, data = {}) {
+    if (!restartLifecycleLogPath) {
+      return;
+    }
+    const record = {
+      timestamp: new Date().toISOString(),
+      pid: process.pid,
+      event,
+      ...data
+    };
+    try {
+      await fs.mkdir(path.dirname(restartLifecycleLogPath), { recursive: true });
+      await fs.appendFile(restartLifecycleLogPath, `${JSON.stringify(record)}\n`, "utf8");
+    } catch {}
+  }
+
+  async function writeLifecycleState(state) {
+    if (!restartLifecycleStatePath) {
+      return;
+    }
+    try {
+      await fs.mkdir(path.dirname(restartLifecycleStatePath), { recursive: true });
+      await fs.writeFile(restartLifecycleStatePath, JSON.stringify(state, null, 2), "utf8");
+    } catch {}
+  }
+
+  async function readLifecycleState() {
+    if (!restartLifecycleStatePath) {
+      return null;
+    }
+    try {
+      const raw = await fs.readFile(restartLifecycleStatePath, "utf8");
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function resolveRestartNotifyChannel() {
+    const routeId = String(restartNotifyRouteId ?? "").trim();
+    if (!routeId) {
+      return null;
+    }
+    try {
+      const channel = await fetchChannelByRouteId(routeId);
+      if (!channel || typeof channel.isTextBased !== "function" || !channel.isTextBased()) {
+        return null;
+      }
+      return channel;
+    } catch {
+      return null;
+    }
+  }
+
+  async function notifyRestartInProgress({ reason, detail } = {}) {
+    const channel = await resolveRestartNotifyChannel();
+    const now = new Date().toISOString();
+    const body = [`🟠 agent-gateway 准备重启`, `time: ${now}`];
+    if (reason) {
+      body.push(`reason: ${reason}`);
+    }
+    if (detail) {
+      body.push(`detail: ${truncateStatusText(String(detail), 200)}`);
+    }
+    if (channel) {
+      await safeSendToChannel(channel, body.join("\n")).catch(() => {});
+    }
+    await appendLifecycleLog("restart_in_progress", {
+      reason: reason ?? null,
+      detail: detail ?? null
+    });
+  }
+
+  async function recordShutdown(metadata = {}) {
+    const normalized = {
+      recordedAt: new Date().toISOString(),
+      pid: process.pid,
+      exitCode: Number.isFinite(Number(metadata?.exitCode)) ? Number(metadata.exitCode) : null,
+      reason: typeof metadata?.reason === "string" ? metadata.reason : "unknown",
+      signal: typeof metadata?.signal === "string" ? metadata.signal : null,
+      detail: typeof metadata?.detail === "string" ? truncateStatusText(metadata.detail, 200) : null
+    };
+    await writeLifecycleState({ type: "shutdown", ...normalized });
+    await appendLifecycleLog("shutdown", normalized);
+  }
+
+  async function announceStartup({ readiness } = {}) {
+    if (startupAnnounced) {
+      return;
+    }
+    startupAnnounced = true;
+    const lastState = await readLifecycleState();
+    const lastShutdownReason =
+      lastState?.type === "shutdown" && typeof lastState?.reason === "string" ? lastState.reason : null;
+    const readinessLabel = readiness?.ready === true ? "ready" : "degraded";
+    const channel = await resolveRestartNotifyChannel();
+    if (channel) {
+      const lines = [
+        "🟢 agent-gateway 已启动",
+        `time: ${new Date().toISOString()}`,
+        `pid: ${process.pid}`,
+        `status: ${readinessLabel}`
+      ];
+      if (lastShutdownReason) {
+        lines.push(`last_shutdown: ${lastShutdownReason}`);
+      }
+      if (lastState?.detail) {
+        lines.push(`last_detail: ${truncateStatusText(String(lastState.detail), 200)}`);
+      }
+      await safeSendToChannel(channel, lines.join("\n")).catch(() => {});
+    }
+    await appendLifecycleLog("startup", {
+      status: readinessLabel,
+      lastShutdownReason: lastShutdownReason ?? null,
+      lastShutdownDetail: typeof lastState?.detail === "string" ? lastState.detail : null,
+      degradedPlatforms: Array.isArray(readiness?.degradedPlatforms)
+        ? readiness.degradedPlatforms.map((entry) => ({
+            platformId: entry?.platformId ?? null,
+            reason: entry?.reason ?? null
+          }))
+        : []
+    });
+    await writeLifecycleState({
+      type: "startup",
+      recordedAt: new Date().toISOString(),
+      pid: process.pid,
+      status: readinessLabel
+    });
+  }
+
   function shouldHandleAsSelfRestartRequest(content) {
     const text = String(content ?? "").trim().toLowerCase();
     if (!text || text.startsWith("!")) {
@@ -210,6 +355,8 @@ export function createRuntimeOps(deps) {
     maybeHandleRestartRequestSignal,
     requestSelfRestartFromDiscord,
     maybeCompletePendingRestartNotice,
+    announceStartup,
+    recordShutdown,
     shouldHandleAsSelfRestartRequest
   };
 }
