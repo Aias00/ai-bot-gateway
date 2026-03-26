@@ -83,6 +83,8 @@ export async function buildRuntimeGraph(deps) {
     fs,
     imageCacheDir,
     maxImagesPerMessage,
+    attachmentMaxBytes,
+    execFileAsync,
     discordToken,
     fetch,
     formatInputTextForSetup,

@@ -1,4 +1,5 @@
 import { isMissingRolloutPathError } from "../app/runtimeUtils.js";
+import { extractStreamingAppend, normalizeStreamingSnapshotText } from "./textNormalization.js";
 
 export function createNotificationRuntime(deps) {
   const {
@@ -9,7 +10,6 @@ export function createNotificationRuntime(deps) {
     normalizeCodexNotification,
     extractAgentMessageText,
     maybeSendAttachmentsForItem = async () => {},
-    maybeSendInferredAttachmentsFromText = async () => 0,
     recordFileChanges,
     buildFileDiffSection,
     sanitizeSummaryForDiscord = (text) => String(text ?? "").trim(),
@@ -18,12 +18,13 @@ export function createNotificationRuntime(deps) {
     truncateStatusText,
     isTransientReconnectErrorMessage,
     safeSendToChannel,
-    safeAddReaction = async () => null,
-    feishuStatusReactions = null,
     truncateForDiscordMessage,
     discordMaxMessageLength = 1900,
     feishuMaxMessageLength = 8000,
     disableStreamingOutput = false,
+    discordSegmentedStreaming = true,
+    discordStreamFlushMs = 900,
+    discordStreamMinChars: discordStreamMinCharsInput,
     feishuSegmentedStreaming = false,
     feishuStreamMinChars = 80,
     debugLog,
@@ -34,7 +35,9 @@ export function createNotificationRuntime(deps) {
     turnCompletionMaxWaitMs = 12000,
     reconnectSettleQuietMs = 5000
   } = deps;
-  const discordStreamMinChars = Math.max(80, Math.min(240, Math.floor(discordMaxMessageLength / 16)));
+  const discordStreamMinChars = Number.isFinite(Number(discordStreamMinCharsInput))
+    ? Math.max(20, Number(discordStreamMinCharsInput))
+    : 32;
 
   async function handleNotification({ method, params }) {
     const normalized = normalizeCodexNotification({ method, params });
@@ -59,7 +62,6 @@ export function createNotificationRuntime(deps) {
         deltaLength: delta.length
       });
       appendTrackerText(tracker, delta, { fromDelta: true });
-      await maybeApplyStatusReaction(tracker, "running");
       return;
     }
 
@@ -79,8 +81,6 @@ export function createNotificationRuntime(deps) {
       if (isToolCallItemType(item?.type)) {
         noteToolCallObserved(tracker);
         await ensureWorkingStage(tracker);
-      } else if (state === "started") {
-        await maybeApplyStatusReaction(tracker, "running");
       }
       await ensureThinkingStage(tracker);
       if (state === "started") {
@@ -103,8 +103,10 @@ export function createNotificationRuntime(deps) {
         recordFileChanges(tracker, item);
       }
 
-      if (state === "completed" && item) {
-        await maybeSendAttachmentsForItem(tracker, item);
+      if (state === "completed") {
+        if (item?.type === "imageView") {
+          await maybeSendAttachmentsForItem(tracker, item);
+        }
       }
 
       if (state === "started") {
@@ -188,7 +190,8 @@ export function createNotificationRuntime(deps) {
       return;
     }
     const elapsed = Date.now() - tracker.lastFlushAt;
-    const delay = Math.max(0, 800 - elapsed);
+    const targetDelay = isDiscordTracker(tracker) ? discordStreamFlushMs : 800;
+    const delay = Math.max(0, targetDelay - elapsed);
     tracker.flushTimer = setTimeout(() => {
       tracker.flushTimer = null;
       void flushTrackerParagraphs(tracker, { force: false }).catch((error) => {
@@ -202,7 +205,11 @@ export function createNotificationRuntime(deps) {
       return;
     }
     if (canSegmentStreamTrackerOutput(tracker)) {
-      await flushSegmentedStreamMessages(tracker, { force });
+      if (isDiscordTracker(tracker)) {
+        await flushDiscordStreamSegments(tracker, { force });
+      } else {
+        await flushFeishuStreamSegments(tracker, { force });
+      }
       tracker.lastFlushAt = Date.now();
       return;
     }
@@ -248,7 +255,6 @@ export function createNotificationRuntime(deps) {
         } else {
           pushStatusLine(tracker, `❌ Error: ${truncateStatusText(finalError.message, 220)}`);
         }
-        await maybeApplyStatusReaction(tracker, "error");
         await safeSendToChannel(tracker.channel, `❌ Error: ${truncateStatusText(finalError.message, 220)}`).catch((sendError) => {
           console.error(`failed to send turn error for ${threadId}: ${formatErrorMessage(sendError)}`);
         });
@@ -258,7 +264,6 @@ export function createNotificationRuntime(deps) {
       tracker.completed = true;
       transitionTurnPhase(tracker, TURN_PHASE.DONE);
       await finalizeUxFlowStages(tracker);
-      await maybeApplyStatusReaction(tracker, "done");
 
       tracker.fullText = normalizeFinalSummaryText(tracker.fullText);
       const summaryTextForDiscord = sanitizeSummaryForDiscord(tracker.fullText);
@@ -274,10 +279,6 @@ export function createNotificationRuntime(deps) {
       });
       if (summaryTextForDiscord) {
         await sendFinalSummary(tracker, summaryTextForDiscord);
-        const inferredAttachmentCount = await maybeSendInferredAttachmentsFromText(tracker, tracker.fullText);
-        if (inferredAttachmentCount > 0) {
-          tracker.hasSummaryImageAttachment = true;
-        }
       }
       if (diffBlock) {
         await sendChunkedToChannel(tracker.channel, diffBlock);
@@ -328,34 +329,6 @@ export function createNotificationRuntime(deps) {
       return;
     }
     tracker.lastTurnActivityAt = Date.now();
-  }
-
-  async function maybeApplyStatusReaction(tracker, reactionKey) {
-    if (!tracker || !isFeishuTracker(tracker) || !tracker.statusMessage) {
-      return;
-    }
-    const emojiType = resolveFeishuStatusReaction(reactionKey);
-    if (!emojiType) {
-      return;
-    }
-    if (tracker.lastStatusReactionKey === reactionKey) {
-      return;
-    }
-    const result = await safeAddReaction(tracker.statusMessage, {
-      key: reactionKey,
-      emojiType
-    });
-    if (result) {
-      tracker.lastStatusReactionKey = reactionKey;
-    }
-  }
-
-  function resolveFeishuStatusReaction(reactionKey) {
-    if (!feishuStatusReactions || typeof feishuStatusReactions !== "object") {
-      return "";
-    }
-    const candidate = feishuStatusReactions[reactionKey];
-    return typeof candidate === "string" ? candidate.trim() : "";
   }
 
   function noteToolCallObserved(tracker) {
@@ -488,7 +461,7 @@ export function createNotificationRuntime(deps) {
   }
 
   async function ensureThinkingStage(tracker) {
-    if (!tracker?.channel || !canEditTrackerStatusMessage(tracker) || tracker?.hasToolCall) {
+    if (!tracker?.channel || !tracker?.statusMessageId || tracker?.hasToolCall) {
       clearThinkingTicker(tracker);
       return;
     }
@@ -499,7 +472,7 @@ export function createNotificationRuntime(deps) {
       return;
     }
     const tick = async () => {
-      if (!tracker?.channel || !canEditTrackerStatusMessage(tracker) || tracker?.hasToolCall) {
+      if (!tracker?.channel || !tracker?.statusMessageId || tracker?.hasToolCall) {
         clearThinkingTicker(tracker);
         return;
       }
@@ -536,9 +509,8 @@ export function createNotificationRuntime(deps) {
       tracker.firstToolCallAt = Date.now();
     }
     const createPromise = (async () => {
-      void maybeApplyStatusReaction(tracker, "working");
       const elapsed = formatDuration(Date.now() - tracker.firstToolCallAt);
-      if (canEditTrackerStatusMessage(tracker)) {
+      if (tracker.statusMessageId) {
         const payload = `👷 Working (${elapsed})`;
         pushStatusLine(tracker, payload);
         await editTrackerMessage(tracker, buildTrackerMessageContent(tracker));
@@ -573,7 +545,7 @@ export function createNotificationRuntime(deps) {
       const firstToolAt = tracker.firstToolCallAt || Date.now();
       const elapsed = formatDuration(Date.now() - firstToolAt);
       const payload = `👷 Working (${elapsed})`;
-      if (canEditTrackerStatusMessage(tracker)) {
+      if (tracker.statusMessageId) {
         pushStatusLine(tracker, payload);
         await editTrackerMessage(tracker, buildTrackerMessageContent(tracker));
         tracker.workingLastRefreshAt = Date.now();
@@ -633,7 +605,7 @@ export function createNotificationRuntime(deps) {
     if (tracker.hasToolCall && tracker.firstToolCallAt) {
       tracker.lastToolCompletedAt = Date.now();
       const elapsed = formatDuration(tracker.lastToolCompletedAt - tracker.firstToolCallAt);
-      if (canEditTrackerStatusMessage(tracker)) {
+      if (tracker.statusMessageId) {
         pushStatusLine(tracker, `✅ Work complete (${elapsed})`);
         await editTrackerMessage(tracker, buildTrackerMessageContent(tracker));
         return;
@@ -662,9 +634,16 @@ export function createNotificationRuntime(deps) {
     if (!text) {
       return;
     }
-    tracker.fullText += text;
+    const nextText = fromDelta ? normalizeStreamingSnapshotText(text) : text;
+    const appendText = fromDelta ? extractStreamingAppend(tracker.fullText, nextText) : nextText;
+    if (!appendText) {
+      return;
+    }
+    tracker.fullText += appendText;
     if (fromDelta) {
       tracker.seenDelta = true;
+      ensureSegmentedStreamState(tracker);
+      tracker.segmentedStreamBuffer += appendText;
     }
     if (canStreamTrackerOutput(tracker)) {
       scheduleFlush(tracker);
@@ -686,7 +665,7 @@ export function createNotificationRuntime(deps) {
   }
 
   function buildTrackerMessageContent(tracker) {
-    if (canInlineStreamTrackerOutput(tracker)) {
+    if (canInlineStreamTrackerOutput(tracker) && !isDiscordTracker(tracker)) {
       const firstChunk = String(splitTextForMessages(tracker.fullText, messageChunkLimitForTracker(tracker))[0] ?? "").trim();
       if (firstChunk) {
         return firstChunk;
@@ -701,7 +680,7 @@ export function createNotificationRuntime(deps) {
       return;
     }
     if (canSegmentStreamTrackerOutput(tracker)) {
-      await sendSegmentedFinalSummary(tracker, summaryTextForDiscord);
+      await sendFeishuFinalSummary(tracker, summaryTextForDiscord);
       return;
     }
     if (!canInlineStreamTrackerOutput(tracker)) {
@@ -723,9 +702,6 @@ export function createNotificationRuntime(deps) {
     if (!tracker?.channel) {
       return false;
     }
-    if (isFeishuTracker(tracker) && !feishuSegmentedStreaming) {
-      return false;
-    }
     if (tracker.seenDelta !== true) {
       return false;
     }
@@ -733,21 +709,14 @@ export function createNotificationRuntime(deps) {
   }
 
   function canInlineStreamTrackerOutput(tracker) {
-    return (
-      canStreamTrackerOutput(tracker) &&
-      !canSegmentStreamTrackerOutput(tracker) &&
-      canEditTrackerStatusMessage(tracker)
-    );
+    if (isDiscordTracker(tracker)) {
+      return false;
+    }
+    return canStreamTrackerOutput(tracker) && !canSegmentStreamTrackerOutput(tracker) && Boolean(tracker?.statusMessageId);
   }
 
   function canSegmentStreamTrackerOutput(tracker) {
-    if (!canStreamTrackerOutput(tracker)) {
-      return false;
-    }
-    if (isDiscordTracker(tracker)) {
-      return true;
-    }
-    return feishuSegmentedStreaming && isFeishuTracker(tracker);
+    return canStreamTrackerOutput(tracker) && feishuSegmentedStreaming && isFeishuTracker(tracker);
   }
 
   function isFeishuTracker(tracker) {
@@ -764,40 +733,100 @@ export function createNotificationRuntime(deps) {
     return !platform || platform === "discord";
   }
 
-  async function flushSegmentedStreamMessages(tracker, { force }) {
-    ensureFeishuStreamState(tracker);
-    const pendingText = String(tracker.fullText ?? "").slice(tracker.streamedTextOffset);
+  async function flushDiscordStreamSegments(tracker, { force }) {
+    ensureSegmentedStreamState(tracker);
+    const pendingText = String(tracker.segmentedStreamBuffer ?? "");
     if (!pendingText) {
       return;
     }
 
-    const chunks = splitTextForMessages(pendingText, messageChunkLimitForTracker(tracker)).filter(
-      (chunk) => typeof chunk === "string" && chunk.length > 0
-    );
+    const readySegments = collectDiscordReadySegments(pendingText, {
+      force,
+      limit: messageChunkLimitForTracker(tracker),
+      minChars: streamTailMinCharsForTracker(tracker)
+    });
+    if (readySegments.length === 0) {
+      return;
+    }
+
+    let consumedLength = 0;
+    for (const segment of readySegments) {
+      const payload = String(segment?.text ?? "");
+      if (!payload.trim()) {
+        consumedLength = Math.max(consumedLength, Number(segment?.endOffset) || 0);
+        continue;
+      }
+      const normalizedPayload = payload.trim();
+      if (hasSeenDiscordSegment(tracker, normalizedPayload)) {
+        consumedLength = Math.max(consumedLength, Number(segment?.endOffset) || 0);
+        continue;
+      }
+      const sentMessage = await safeSendToChannel(tracker.channel, payload.trimEnd());
+      if (!sentMessage) {
+        debugLog("render", "discord stream segment deferred", {
+          threadId: tracker.threadId,
+          turnId: tracker.threadId,
+          segmentLength: payload.length,
+          streamedTextOffset: tracker.streamedTextOffset
+        });
+        break;
+      }
+      noteSeenDiscordSegment(tracker, normalizedPayload);
+      consumedLength = Math.max(consumedLength, Number(segment?.endOffset) || 0);
+      tracker.streamedSummaryText += payload;
+      tracker.streamedTextOffset = tracker.streamedSummaryText.length;
+      debugLog("render", "sent discord stream segment", {
+        threadId: tracker.threadId,
+        turnId: tracker.threadId,
+        segmentLength: payload.length,
+        streamedTextOffset: tracker.streamedTextOffset
+      });
+    }
+    if (consumedLength > 0) {
+      tracker.segmentedStreamBuffer = pendingText.slice(consumedLength);
+    }
+  }
+
+  async function flushFeishuStreamSegments(tracker, { force }) {
+    ensureSegmentedStreamState(tracker);
+    const pendingText = String(tracker.segmentedStreamBuffer ?? "");
+    if (!pendingText) {
+      return;
+    }
+
+    const chunks = splitTextForMessages(pendingText, messageChunkLimitForTracker(tracker)).filter((chunk) => typeof chunk === "string" && chunk.length > 0);
     if (chunks.length === 0) {
       return;
+    }
+
+    const minChars = streamTailMinCharsForTracker(tracker);
+    if (!force) {
+      const trimmed = pendingText.replace(/\s+$/u, "");
+      if (trimmed.length < minChars && !/(?:\r?\n|[。！？.!?])$/u.test(trimmed)) {
+        return;
+      }
     }
 
     const readyChunks = [];
     if (force) {
       readyChunks.push(...chunks);
     } else if (chunks.length === 1) {
-      if (shouldSendStreamTail(chunks[0], streamTailMinCharsForTracker(tracker))) {
+      if (shouldSendStreamTail(chunks[0], minChars)) {
         readyChunks.push(chunks[0]);
       }
     } else {
       readyChunks.push(...chunks.slice(0, -1));
       const tail = chunks[chunks.length - 1];
-      if (shouldSendStreamTail(tail, streamTailMinCharsForTracker(tracker))) {
+      if (shouldSendStreamTail(tail, minChars)) {
         readyChunks.push(tail);
       }
     }
 
+    let consumedLength = 0;
     for (const chunk of readyChunks) {
       const payload = String(chunk ?? "");
       if (!payload.trim()) {
-        tracker.streamedTextOffset += payload.length;
-        tracker.streamedSummaryText += payload;
+        consumedLength += payload.length;
         continue;
       }
       const sentMessage = await safeSendToChannel(tracker.channel, payload);
@@ -810,14 +839,18 @@ export function createNotificationRuntime(deps) {
         });
         break;
       }
-      tracker.streamedTextOffset += payload.length;
+      consumedLength += payload.length;
       tracker.streamedSummaryText += payload;
+      tracker.streamedTextOffset = tracker.streamedSummaryText.length;
       debugLog("render", "sent stream segment", {
         threadId: tracker.threadId,
         turnId: tracker.threadId,
         segmentLength: payload.length,
         streamedTextOffset: tracker.streamedTextOffset
       });
+    }
+    if (consumedLength > 0) {
+      tracker.segmentedStreamBuffer = pendingText.slice(consumedLength);
     }
   }
 
@@ -836,7 +869,7 @@ export function createNotificationRuntime(deps) {
     return isFeishuTracker(tracker) ? feishuStreamMinChars : discordStreamMinChars;
   }
 
-  function ensureFeishuStreamState(tracker) {
+  function ensureSegmentedStreamState(tracker) {
     if (!tracker || typeof tracker !== "object") {
       return;
     }
@@ -846,21 +879,63 @@ export function createNotificationRuntime(deps) {
     if (typeof tracker.streamedSummaryText !== "string") {
       tracker.streamedSummaryText = "";
     }
+    if (typeof tracker.segmentedStreamBuffer !== "string") {
+      tracker.segmentedStreamBuffer = "";
+    }
+    if (!(tracker.sentDiscordSegmentKeys instanceof Set)) {
+      tracker.sentDiscordSegmentKeys = new Set();
+    }
   }
 
-  async function sendSegmentedFinalSummary(tracker, summaryTextForDiscord) {
-    ensureFeishuStreamState(tracker);
-    let remaining = summaryTextForDiscord;
-    if (tracker.streamedSummaryText && summaryTextForDiscord.startsWith(tracker.streamedSummaryText)) {
-      remaining = summaryTextForDiscord.slice(tracker.streamedSummaryText.length);
+  async function sendFeishuFinalSummary(tracker, summaryTextForDiscord) {
+    ensureSegmentedStreamState(tracker);
+    const normalizedSummary = normalizeFinalSummaryText(String(summaryTextForDiscord ?? ""));
+    let remaining = normalizedSummary;
+    if (tracker.streamedSummaryText && normalizedSummary.startsWith(tracker.streamedSummaryText)) {
+      remaining = normalizedSummary.slice(tracker.streamedSummaryText.length);
     } else if (tracker.streamedTextOffset > 0) {
-      remaining = summaryTextForDiscord.slice(Math.min(summaryTextForDiscord.length, tracker.streamedTextOffset));
+      remaining = normalizedSummary.slice(Math.min(normalizedSummary.length, tracker.streamedTextOffset));
     }
     if (!remaining.trim()) {
+      tracker.streamedSummaryText = normalizedSummary;
+      tracker.streamedTextOffset = normalizedSummary.length;
+      tracker.segmentedStreamBuffer = "";
       return;
     }
     await sendChunkedToChannel(tracker.channel, remaining, messageChunkLimitForTracker(tracker));
-    tracker.streamedSummaryText = summaryTextForDiscord;
+    tracker.streamedSummaryText = normalizedSummary;
+    tracker.streamedTextOffset = normalizedSummary.length;
+    tracker.segmentedStreamBuffer = "";
+  }
+
+  async function sendDiscordFinalSummary(tracker, summaryTextForDiscord) {
+    ensureSegmentedStreamState(tracker);
+    await flushDiscordStreamSegments(tracker, { force: true });
+    const normalizedSummary = String(summaryTextForDiscord ?? "");
+    let remaining = normalizedSummary;
+    if (tracker.streamedSummaryText && normalizedSummary.startsWith(tracker.streamedSummaryText)) {
+      remaining = normalizedSummary.slice(tracker.streamedSummaryText.length);
+    } else if (tracker.streamedTextOffset > 0) {
+      remaining = normalizedSummary.slice(Math.min(normalizedSummary.length, tracker.streamedTextOffset));
+    }
+    if (remaining.trim()) {
+      const remainingSegments = collectDiscordReadySegments(remaining, {
+        force: true,
+        limit: messageChunkLimitForTracker(tracker),
+        minChars: streamTailMinCharsForTracker(tracker)
+      });
+      for (const segment of remainingSegments) {
+        const payload = String(segment?.text ?? "").trim();
+        if (!payload || hasSeenDiscordSegment(tracker, payload)) {
+          continue;
+        }
+        await sendChunkedToChannel(tracker.channel, payload, messageChunkLimitForTracker(tracker));
+        noteSeenDiscordSegment(tracker, payload);
+      }
+    }
+    tracker.streamedSummaryText = normalizedSummary;
+    tracker.streamedTextOffset = normalizedSummary.length;
+    tracker.segmentedStreamBuffer = "";
   }
 
   function messageChunkLimitForTracker(tracker) {
@@ -879,7 +954,7 @@ export function createNotificationRuntime(deps) {
   }
 
   async function editTrackerMessage(tracker, content) {
-    if (!tracker?.channel || !content || !canEditTrackerStatusMessage(tracker)) {
+    if (!tracker?.channel || !content) {
       return;
     }
     if (tracker.lastRenderedContent === content) {
@@ -964,19 +1039,6 @@ export function createNotificationRuntime(deps) {
     return `${seconds}s`;
   }
 
-  function canEditTrackerStatusMessage(tracker) {
-    if (!tracker?.statusMessageId) {
-      return false;
-    }
-    if (tracker?.statusMessage?.supportsEdits === false) {
-      return false;
-    }
-    if (tracker?.channel?.supportsMessageEdits === false) {
-      return false;
-    }
-    return !isFeishuTracker(tracker);
-  }
-
   return {
     handleNotification,
     finalizeTurn,
@@ -997,6 +1059,109 @@ function splitTextForMessagesFallback(text, limit = 1900) {
     chunks.push(normalized.slice(offset, offset + limit));
   }
   return chunks;
+}
+
+function collectDiscordReadySegments(text, { force, limit, minChars }) {
+  const source = typeof text === "string" ? text : String(text ?? "");
+  if (!source) {
+    return [];
+  }
+  if (force) {
+    const chunks = splitTextForMessagesFallback(source, limit);
+    let offset = 0;
+    return chunks.map((chunk) => {
+      offset += chunk.length;
+      return { text: chunk, endOffset: offset };
+    });
+  }
+
+  const ready = [];
+  let offset = 0;
+  while (offset < source.length) {
+    const remaining = source.slice(offset);
+    const boundary = findDiscordStreamBoundary(remaining, { limit, minChars });
+    if (boundary <= 0) {
+      break;
+    }
+    ready.push({
+      text: remaining.slice(0, boundary),
+      endOffset: offset + boundary
+    });
+    offset += boundary;
+  }
+  return ready;
+}
+
+function findDiscordStreamBoundary(text, { limit, minChars }) {
+  const source = typeof text === "string" ? text : String(text ?? "");
+  if (!source) {
+    return 0;
+  }
+  const slice = source.slice(0, limit);
+  const preferredBoundary = Math.max(
+    findLastMatchEnd(slice, /\n{2,}/gu),
+    findLastMatchEnd(slice, /\n/gu),
+    findLastMatchEnd(slice, /(?:[。！？.!?]+["'”’」』》】）]?(?:\s+|$))/gu)
+  );
+  if (preferredBoundary >= minChars) {
+    return preferredBoundary;
+  }
+  if (slice.length < limit) {
+    return 0;
+  }
+  const whitespaceBoundary = slice.lastIndexOf(" ");
+  if (whitespaceBoundary >= minChars) {
+    return whitespaceBoundary + 1;
+  }
+  return limit;
+}
+
+function findLastMatchEnd(text, pattern) {
+  if (typeof text !== "string" || !text) {
+    return 0;
+  }
+  let lastEnd = 0;
+  for (const match of text.matchAll(pattern)) {
+    const matchText = String(match[0] ?? "");
+    const start = Number(match.index ?? -1);
+    if (start < 0 || !matchText) {
+      continue;
+    }
+    lastEnd = start + matchText.length;
+  }
+  return lastEnd;
+}
+
+function hasSeenDiscordSegment(tracker, text) {
+  if (!tracker || !(tracker.sentDiscordSegmentKeys instanceof Set)) {
+    return false;
+  }
+  const key = normalizeDiscordSegmentKey(text);
+  if (!key) {
+    return false;
+  }
+  return tracker.sentDiscordSegmentKeys.has(key);
+}
+
+function noteSeenDiscordSegment(tracker, text) {
+  if (!tracker) {
+    return;
+  }
+  if (!(tracker.sentDiscordSegmentKeys instanceof Set)) {
+    tracker.sentDiscordSegmentKeys = new Set();
+  }
+  const key = normalizeDiscordSegmentKey(text);
+  if (!key) {
+    return;
+  }
+  tracker.sentDiscordSegmentKeys.add(key);
+}
+
+function normalizeDiscordSegmentKey(text) {
+  if (typeof text !== "string") {
+    return "";
+  }
+  return text.trim();
 }
 
 function settleTracker(tracker, action, value) {

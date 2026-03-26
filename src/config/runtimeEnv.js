@@ -80,6 +80,7 @@ export function loadRuntimeEnv() {
   const exitOnRestartAck = process.env.DISCORD_EXIT_ON_RESTART_ACK === "1";
   const debugLoggingEnabled = process.env.DISCORD_DEBUG_LOGGING === "1";
   const disableStreamingOutput = process.env.DISABLE_STREAMING_OUTPUT === "1";
+  const discordSegmentedStreaming = process.env.DISCORD_SEGMENTED_STREAMING === "1";
   const projectsCategoryName =
     process.env.DISCORD_PROJECTS_CATEGORY_NAME ??
     process.env.DISCORD_LEGACY_CATEGORY_NAME ??
@@ -154,6 +155,7 @@ export function loadRuntimeEnv() {
     heartbeatIntervalMs,
     debugLoggingEnabled,
     disableStreamingOutput,
+    discordSegmentedStreaming,
     projectsCategoryName,
     extraWritableRoots,
     backendHttpEnabled,

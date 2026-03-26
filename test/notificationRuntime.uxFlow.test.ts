@@ -6,7 +6,6 @@ type TurnTracker = {
   repoChannelId: string;
   channel: {
     platform?: string;
-    supportsMessageEdits?: boolean;
     isTextBased: () => boolean;
     messages: {
       fetch: () => Promise<null>;
@@ -15,10 +14,8 @@ type TurnTracker = {
   statusMessage: {
     id: string;
     platform?: string;
-    supportsEdits?: boolean;
     channel: {
       platform?: string;
-      supportsMessageEdits?: boolean;
       isTextBased: () => boolean;
       messages: {
         fetch: () => Promise<null>;
@@ -74,7 +71,6 @@ function createTracker(options: { platform?: string } = {}) {
   const platform = options.platform ?? "discord";
   const channel = {
     platform,
-    supportsMessageEdits: platform !== "feishu",
     isTextBased: () => true,
     messages: {
       fetch: async () => null
@@ -87,7 +83,6 @@ function createTracker(options: { platform?: string } = {}) {
     statusMessage: {
       id: "thinking-1",
       platform,
-      supportsEdits: platform !== "feishu",
       channel,
       edit: async (text: string) => {
         sentEdits.push(text);
@@ -137,7 +132,6 @@ describe("notification runtime ux flow cutover", () => {
     const statusEdits: string[] = [];
     const chunkedMessages: string[] = [];
     const itemAttachmentCalls: string[] = [];
-    const inferredAttachmentTexts: string[] = [];
     tracker.statusMessage.edit = async (text: string) => {
       statusEdits.push(text);
     };
@@ -170,10 +164,7 @@ describe("notification runtime ux flow cutover", () => {
       maybeSendAttachmentsForItem: async (_tracker: unknown, item: { type?: string }) => {
         itemAttachmentCalls.push(String(item?.type ?? ""));
       },
-      maybeSendInferredAttachmentsFromText: async (_tracker: unknown, text: string) => {
-        inferredAttachmentTexts.push(text);
-        return 2;
-      },
+      maybeSendInferredAttachmentsFromText: async () => 2,
       recordFileChanges: () => {},
       summarizeItemForStatus: () => [],
       extractWebSearchDetails: () => [],
@@ -228,9 +219,7 @@ describe("notification runtime ux flow cutover", () => {
     expect(sentMessages.some((line) => line.startsWith("🖼️ Image:"))).toBe(false);
     expect(chunkedMessages).toContain("Summary complete with image /tmp/final.png");
     expect(chunkedMessages).toContain("```ansi\n+2 -1\n```");
-    expect(itemAttachmentCalls).toEqual(["commandExecution"]);
-    expect(inferredAttachmentTexts).toEqual(["Summary complete with image /tmp/final.png"]);
-    expect(tracker.hasSummaryImageAttachment).toBe(true);
+    expect(itemAttachmentCalls).toEqual([]);
   });
 
   test("silently skips summary image stage when no image path is inferred", async () => {
@@ -239,7 +228,6 @@ describe("notification runtime ux flow cutover", () => {
     activeTurns.set("thread-1", tracker);
     const sentMessages: string[] = [];
     const chunkedMessages: string[] = [];
-    const inferredAttachmentTexts: string[] = [];
 
     const runtime = createNotificationRuntime({
       activeTurns,
@@ -258,10 +246,7 @@ describe("notification runtime ux flow cutover", () => {
       },
       extractAgentMessageText: () => "",
       maybeSendAttachmentsForItem: async () => {},
-      maybeSendInferredAttachmentsFromText: async (_tracker: unknown, text: string) => {
-        inferredAttachmentTexts.push(text);
-        return 0;
-      },
+      maybeSendInferredAttachmentsFromText: async () => 0,
       recordFileChanges: () => {},
       summarizeItemForStatus: () => [],
       extractWebSearchDetails: () => [],
@@ -295,8 +280,6 @@ describe("notification runtime ux flow cutover", () => {
 
     expect(chunkedMessages).toEqual(["Summary without local image path"]);
     expect(sentMessages).toEqual([]);
-    expect(inferredAttachmentTexts).toEqual(["Summary without local image path"]);
-    expect(tracker.hasSummaryImageAttachment).toBe(false);
   });
 
   test("does not send file diff block in user verbosity", async () => {
@@ -493,12 +476,12 @@ describe("notification runtime ux flow cutover", () => {
     }
   });
 
-  test("streams Discord agent deltas as segmented messages instead of editing the status message", async () => {
+  test("does not stream Discord body text before completion", async () => {
     const activeTurns = new Map<string, TurnTracker>();
     const tracker = createTracker();
     tracker.lastFlushAt = Date.now() - 5000;
     activeTurns.set("thread-1", tracker);
-    const streamedMessages: string[] = [];
+    const sentMessages: string[] = [];
     const statusEdits: string[] = [];
     tracker.statusMessage.edit = async (text: string) => {
       statusEdits.push(text);
@@ -530,13 +513,19 @@ describe("notification runtime ux flow cutover", () => {
       extractWebSearchDetails: () => [],
       buildFileDiffSection: () => "",
       buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
-      sendChunkedToChannel: async () => {},
+      sendChunkedToChannel: async (_channel: unknown, text: string) => {
+        sentMessages.push(text);
+      },
       normalizeFinalSummaryText: (text: string) => text.trim(),
       truncateStatusText: (text: string) => text,
       isTransientReconnectErrorMessage: () => false,
       safeSendToChannel: async (_channel: unknown, text: string) => {
-        streamedMessages.push(text);
-        return { id: `discord-stream-${streamedMessages.length}` };
+        sentMessages.push(text);
+        return {
+          id: `msg-${sentMessages.length}`,
+          channel: tracker.channel,
+          edit: async () => {}
+        };
       },
       truncateForDiscordMessage: (text: string) => text,
       discordMaxMessageLength: 1900,
@@ -547,21 +536,94 @@ describe("notification runtime ux flow cutover", () => {
 
     await runtime.handleNotification({
       method: "item/agentMessage/delta",
-      params: { threadId: "thread-1", delta: "Hello." }
+      params: {
+        threadId: "thread-1",
+        delta: "This is a buffered Discord stream update that should not appear before completion."
+      }
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
-    expect(streamedMessages).toEqual(["Hello."]);
-    expect(statusEdits.some((value) => value.includes("Hello."))).toBe(false);
+    expect(statusEdits.some((line) => line.includes("buffered Discord stream update"))).toBe(false);
+    expect(sentMessages).toEqual([]);
   });
 
-  test("does not resend the first Discord summary chunk when it was already streamed as a message", async () => {
+  test("keeps Discord status message as status-only while waiting for completion", async () => {
     const activeTurns = new Map<string, TurnTracker>();
     const tracker = createTracker();
     tracker.lastFlushAt = Date.now() - 5000;
     activeTurns.set("thread-1", tracker);
-    const streamedMessages: string[] = [];
-    const chunkedMessages: string[] = [];
+    const sentMessages: string[] = [];
+    const statusEdits: string[] = [];
+    tracker.statusMessage.edit = async (text: string) => {
+      statusEdits.push(text);
+    };
+
+    const runtime = createNotificationRuntime({
+      activeTurns,
+      renderVerbosity: "user",
+      TURN_PHASE: {
+        RUNNING: "running",
+        RECONNECTING: "reconnecting",
+        FINALIZING: "finalizing",
+        FAILED: "failed",
+        DONE: "done"
+      },
+      transitionTurnPhase: () => true,
+      normalizeCodexNotification: (notification: CodexNotification) => {
+        const { method, params } = notification;
+        if (method === "item/agentMessage/delta") {
+          return { kind: "agent_delta", threadId: params.threadId, delta: params.delta };
+        }
+        return { kind: "unknown" };
+      },
+      extractAgentMessageText: () => "",
+      maybeSendAttachmentsForItem: async () => {},
+      maybeSendInferredAttachmentsFromText: async () => 0,
+      recordFileChanges: () => {},
+      summarizeItemForStatus: () => [],
+      extractWebSearchDetails: () => [],
+      buildFileDiffSection: () => "",
+      buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
+      sendChunkedToChannel: async (_channel: unknown, text: string) => {
+        sentMessages.push(text);
+      },
+      normalizeFinalSummaryText: (text: string) => text.trim(),
+      truncateStatusText: (text: string) => text,
+      isTransientReconnectErrorMessage: () => false,
+      safeSendToChannel: async (_channel: unknown, text: string) => {
+        sentMessages.push(text);
+        return {
+          id: `msg-${sentMessages.length}`,
+          channel: tracker.channel,
+          edit: async () => {}
+        };
+      },
+      truncateForDiscordMessage: (text: string) => text,
+      discordMaxMessageLength: 1900,
+      debugLog: () => {},
+      writeHeartbeatFile: async () => {},
+      onTurnFinalized: async () => {}
+    });
+
+    await runtime.handleNotification({
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: "thread-1",
+        delta: "Discord body should not be written back into the thinking status message."
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(statusEdits.some((line) => line.includes("Discord body should not"))).toBe(false);
+    expect(sentMessages).toEqual([]);
+  });
+
+  test("does not resend buffered Discord summary content on finalize", async () => {
+    const activeTurns = new Map<string, TurnTracker>();
+    const tracker = createTracker();
+    tracker.lastFlushAt = Date.now() - 5000;
+    activeTurns.set("thread-1", tracker);
+    const sentMessages: string[] = [];
     const statusEdits: string[] = [];
     tracker.statusMessage.edit = async (text: string) => {
       statusEdits.push(text);
@@ -597,14 +659,18 @@ describe("notification runtime ux flow cutover", () => {
       buildFileDiffSection: () => "",
       buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
       sendChunkedToChannel: async (_channel: unknown, text: string) => {
-        chunkedMessages.push(text);
+        sentMessages.push(text);
       },
       normalizeFinalSummaryText: (text: string) => text.trim(),
       truncateStatusText: (text: string) => text,
       isTransientReconnectErrorMessage: () => false,
       safeSendToChannel: async (_channel: unknown, text: string) => {
-        streamedMessages.push(text);
-        return { id: `discord-stream-${streamedMessages.length}` };
+        sentMessages.push(text);
+        return {
+          id: `msg-${sentMessages.length}`,
+          channel: tracker.channel,
+          edit: async () => {}
+        };
       },
       truncateForDiscordMessage: (text: string) => text,
       discordMaxMessageLength: 1900,
@@ -619,25 +685,27 @@ describe("notification runtime ux flow cutover", () => {
       method: "item/agentMessage/delta",
       params: { threadId: "thread-1", delta: "Streamed final answer." }
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
     await runtime.handleNotification({
       method: "turn/completed",
       params: { threadId: "thread-1" }
     });
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
-    expect(streamedMessages).toEqual(["Streamed final answer."]);
-    expect(chunkedMessages).toEqual([]);
-    expect(statusEdits.some((value) => value.includes("Streamed final answer."))).toBe(false);
+    expect(statusEdits.some((value) => value.includes("Streamed final answer"))).toBe(false);
+    expect(sentMessages).toEqual(["Streamed final answer."]);
   });
 
-  test("sends only the remaining Discord summary tail on finalize after streamed segments", async () => {
+  test("flushes unterminated Discord tail on completion", async () => {
     const activeTurns = new Map<string, TurnTracker>();
     const tracker = createTracker();
     tracker.lastFlushAt = Date.now() - 5000;
     activeTurns.set("thread-1", tracker);
-    const streamedMessages: string[] = [];
-    const chunkedMessages: string[] = [];
+    const sentMessages: string[] = [];
+    const statusEdits: string[] = [];
+    tracker.statusMessage.edit = async (text: string) => {
+      statusEdits.push(text);
+    };
 
     const runtime = createNotificationRuntime({
       activeTurns,
@@ -669,14 +737,18 @@ describe("notification runtime ux flow cutover", () => {
       buildFileDiffSection: () => "",
       buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
       sendChunkedToChannel: async (_channel: unknown, text: string) => {
-        chunkedMessages.push(text);
+        sentMessages.push(text);
       },
       normalizeFinalSummaryText: (text: string) => text.trim(),
       truncateStatusText: (text: string) => text,
       isTransientReconnectErrorMessage: () => false,
       safeSendToChannel: async (_channel: unknown, text: string) => {
-        streamedMessages.push(text);
-        return { id: `discord-stream-${streamedMessages.length}` };
+        sentMessages.push(text);
+        return {
+          id: `msg-${sentMessages.length}`,
+          channel: tracker.channel,
+          edit: async () => {}
+        };
       },
       truncateForDiscordMessage: (text: string) => text,
       discordMaxMessageLength: 1900,
@@ -689,22 +761,19 @@ describe("notification runtime ux flow cutover", () => {
 
     await runtime.handleNotification({
       method: "item/agentMessage/delta",
-      params: { threadId: "thread-1", delta: "Discord prefix." }
+      params: { threadId: "thread-1", delta: "Final Discord body." }
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    await runtime.handleNotification({
-      method: "item/agentMessage/delta",
-      params: { threadId: "thread-1", delta: " tail" }
-    });
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(sentMessages).toEqual([]);
+
     await runtime.handleNotification({
       method: "turn/completed",
       params: { threadId: "thread-1" }
     });
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
-    expect(streamedMessages).toEqual(["Discord prefix."]);
-    expect(chunkedMessages).toEqual([" tail"]);
+    expect(statusEdits.some((value) => value.includes("Final Discord body"))).toBe(false);
+    expect(sentMessages).toEqual(["Final Discord body."]);
   });
 
   test("streams Feishu deltas as segmented messages instead of editing the status message", async () => {
@@ -841,7 +910,7 @@ describe("notification runtime ux flow cutover", () => {
       method: "turn/completed",
       params: { threadId: "thread-1" }
     });
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 40));
 
     expect(streamedMessages).toEqual(["Feishu prefix."]);
     expect(chunkedMessages).toEqual([" tail"]);
@@ -917,206 +986,6 @@ describe("notification runtime ux flow cutover", () => {
 
     expect(streamedMessages).toEqual(["Feishu dropped segment."]);
     expect(chunkedMessages).toEqual(["Feishu dropped segment."]);
-  });
-
-  test("applies configured Feishu status reactions across running, working, and done states", async () => {
-    const activeTurns = new Map<string, TurnTracker>();
-    const tracker = createTracker({ platform: "feishu" });
-    activeTurns.set("thread-1", tracker);
-    const reactions: Array<{ messageId: string; emojiType: string }> = [];
-
-    const runtime = createNotificationRuntime({
-      activeTurns,
-      renderVerbosity: "user",
-      TURN_PHASE: {
-        RUNNING: "running",
-        RECONNECTING: "reconnecting",
-        FINALIZING: "finalizing",
-        FAILED: "failed",
-        DONE: "done"
-      },
-      transitionTurnPhase: () => true,
-      normalizeCodexNotification: (notification: CodexNotification) => {
-        const { method, params } = notification;
-        if (method === "item/agentMessage/delta") {
-          return { kind: "agent_delta", threadId: params.threadId, delta: params.delta };
-        }
-        if (method === "item/started") {
-          return { kind: "item_lifecycle", threadId: params.threadId, item: params.item, state: "started" };
-        }
-        if (method === "turn/completed") {
-          return { kind: "turn_completed", threadId: params.threadId };
-        }
-        return { kind: "unknown" };
-      },
-      extractAgentMessageText: () => "",
-      maybeSendAttachmentsForItem: async () => {},
-      maybeSendInferredAttachmentsFromText: async () => 0,
-      recordFileChanges: () => {},
-      buildFileDiffSection: () => "",
-      sendChunkedToChannel: async () => {},
-      normalizeFinalSummaryText: (text: string) => text.trim(),
-      truncateStatusText: (text: string) => text,
-      isTransientReconnectErrorMessage: () => false,
-      safeSendToChannel: async () => ({ id: "feishu-message-1" }),
-      safeAddReaction: async (message: { id: string }, reaction: { emojiType: string }) => {
-        reactions.push({ messageId: message.id, emojiType: reaction.emojiType });
-        return { ok: true };
-      },
-      feishuStatusReactions: {
-        running: "EYES",
-        working: "HAMMER",
-        done: "DONE",
-        error: "SORRY"
-      },
-      feishuSegmentedStreaming: true,
-      truncateForDiscordMessage: (text: string) => text,
-      discordMaxMessageLength: 1900,
-      debugLog: () => {},
-      writeHeartbeatFile: async () => {},
-      onTurnFinalized: async () => {},
-      turnCompletionQuietMs: 5,
-      turnCompletionMaxWaitMs: 100
-    });
-
-    await runtime.handleNotification({
-      method: "item/agentMessage/delta",
-      params: { threadId: "thread-1", delta: "hello" }
-    });
-    await runtime.handleNotification({
-      method: "item/started",
-      params: { threadId: "thread-1", item: { id: "tool-1", type: "toolCall" } }
-    });
-    await runtime.handleNotification({
-      method: "item/completed",
-      params: { threadId: "thread-1", item: { id: "tool-1", type: "toolCall" } }
-    });
-    await runtime.handleNotification({
-      method: "turn/completed",
-      params: { threadId: "thread-1" }
-    });
-    await new Promise((resolve) => setTimeout(resolve, 120));
-
-    expect(reactions).toEqual([
-      { messageId: "thinking-1", emojiType: "EYES" },
-      { messageId: "thinking-1", emojiType: "HAMMER" },
-      { messageId: "thinking-1", emojiType: "DONE" }
-    ]);
-  });
-
-  test("applies configured Feishu error reaction when turn finalization fails", async () => {
-    const activeTurns = new Map<string, TurnTracker>();
-    const tracker = createTracker({ platform: "feishu" });
-    activeTurns.set("thread-1", tracker);
-    const reactions: Array<{ messageId: string; emojiType: string }> = [];
-
-    const runtime = createNotificationRuntime({
-      activeTurns,
-      renderVerbosity: "user",
-      TURN_PHASE: {
-        RUNNING: "running",
-        RECONNECTING: "reconnecting",
-        FINALIZING: "finalizing",
-        FAILED: "failed",
-        DONE: "done"
-      },
-      transitionTurnPhase: () => true,
-      normalizeCodexNotification: () => ({ kind: "unknown" }),
-      extractAgentMessageText: () => "",
-      maybeSendAttachmentsForItem: async () => {},
-      maybeSendInferredAttachmentsFromText: async () => 0,
-      recordFileChanges: () => {},
-      buildFileDiffSection: () => "",
-      sendChunkedToChannel: async () => {},
-      normalizeFinalSummaryText: (text: string) => text.trim(),
-      truncateStatusText: (text: string) => text,
-      isTransientReconnectErrorMessage: () => false,
-      safeSendToChannel: async () => ({ id: "feishu-message-1" }),
-      safeAddReaction: async (message: { id: string }, reaction: { emojiType: string }) => {
-        reactions.push({ messageId: message.id, emojiType: reaction.emojiType });
-        return { ok: true };
-      },
-      feishuStatusReactions: {
-        running: "EYES",
-        working: "HAMMER",
-        done: "DONE",
-        error: "SORRY"
-      },
-      feishuSegmentedStreaming: true,
-      truncateForDiscordMessage: (text: string) => text,
-      discordMaxMessageLength: 1900,
-      debugLog: () => {},
-      writeHeartbeatFile: async () => {},
-      onTurnFinalized: async () => {}
-    });
-
-    await runtime.finalizeTurn("thread-1", new Error("boom"));
-
-    expect(reactions).toEqual([{ messageId: "thinking-1", emojiType: "SORRY" }]);
-  });
-
-  test("sends Feishu final summary as a new message when status edits are unsupported", async () => {
-    const activeTurns = new Map<string, TurnTracker>();
-    const tracker = createTracker({ platform: "feishu" });
-    activeTurns.set("thread-1", tracker);
-    const statusEdits: string[] = [];
-    const chunkedMessages: string[] = [];
-    tracker.statusMessage.edit = async (text: string) => {
-      statusEdits.push(text);
-    };
-
-    const runtime = createNotificationRuntime({
-      activeTurns,
-      renderVerbosity: "user",
-      TURN_PHASE: {
-        RUNNING: "running",
-        RECONNECTING: "reconnecting",
-        FINALIZING: "finalizing",
-        FAILED: "failed",
-        DONE: "done"
-      },
-      transitionTurnPhase: () => true,
-      normalizeCodexNotification: (notification: CodexNotification) => {
-        const { method, params } = notification;
-        if (method === "turn/completed") {
-          return { kind: "turn_completed", threadId: params.threadId };
-        }
-        return { kind: "unknown" };
-      },
-      extractAgentMessageText: () => "",
-      maybeSendAttachmentsForItem: async () => {},
-      maybeSendInferredAttachmentsFromText: async () => 0,
-      recordFileChanges: () => {},
-      summarizeItemForStatus: () => [],
-      extractWebSearchDetails: () => [],
-      buildFileDiffSection: () => "",
-      buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
-      sendChunkedToChannel: async (_channel: unknown, text: string) => {
-        chunkedMessages.push(text);
-      },
-      normalizeFinalSummaryText: (text: string) => text.trim(),
-      truncateStatusText: (text: string) => text,
-      isTransientReconnectErrorMessage: () => false,
-      safeSendToChannel: async () => null,
-      truncateForDiscordMessage: (text: string) => text,
-      discordMaxMessageLength: 1900,
-      debugLog: () => {},
-      writeHeartbeatFile: async () => {},
-      onTurnFinalized: async () => {},
-      turnCompletionQuietMs: 5,
-      turnCompletionMaxWaitMs: 100
-    });
-
-    tracker.fullText = "Feishu final summary";
-    tracker.seenDelta = true;
-    await runtime.handleNotification({
-      method: "turn/completed",
-      params: { threadId: "thread-1" }
-    });
-    await new Promise((resolve) => setTimeout(resolve, 40));
-
-    expect(statusEdits).toEqual([]);
-    expect(chunkedMessages).toEqual(["Feishu final summary"]);
   });
 
   test("stops thinking timer once tool work begins", async () => {
@@ -1238,63 +1107,6 @@ describe("notification runtime ux flow cutover", () => {
     expect((tracker as TurnTracker & { pendingAttachmentPaths?: Set<string> }).pendingAttachmentPaths).toBeUndefined();
   });
 
-  test("passes completed mcp tool results through attachment sender", async () => {
-    const activeTurns = new Map<string, TurnTracker>();
-    const tracker = createTracker();
-    activeTurns.set("thread-1", tracker);
-    const itemAttachmentCalls: string[] = [];
-
-    const runtime = createNotificationRuntime({
-      activeTurns,
-      renderVerbosity: "user",
-      TURN_PHASE: {
-        RUNNING: "running",
-        RECONNECTING: "reconnecting",
-        FINALIZING: "finalizing",
-        FAILED: "failed",
-        DONE: "done"
-      },
-      transitionTurnPhase: () => true,
-      normalizeCodexNotification: (notification: CodexNotification) => {
-        const { method, params } = notification;
-        if (method === "item/completed") {
-          return { kind: "item_lifecycle", threadId: params.threadId, item: params.item, state: "completed" };
-        }
-        return { kind: "unknown" };
-      },
-      extractAgentMessageText: () => "",
-      maybeSendAttachmentsForItem: async (_tracker: unknown, item: { type?: string }) => {
-        itemAttachmentCalls.push(String(item?.type ?? ""));
-      },
-      maybeSendInferredAttachmentsFromText: async () => 0,
-      recordFileChanges: () => {},
-      summarizeItemForStatus: () => [],
-      extractWebSearchDetails: () => [],
-      buildFileDiffSection: () => "",
-      buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
-      sendChunkedToChannel: async () => {},
-      normalizeFinalSummaryText: (text: string) => text.trim(),
-      truncateStatusText: (text: string) => text,
-      isTransientReconnectErrorMessage: () => false,
-      safeSendToChannel: async () => null,
-      truncateForDiscordMessage: (text: string) => text,
-      discordMaxMessageLength: 1900,
-      debugLog: () => {},
-      writeHeartbeatFile: async () => {},
-      onTurnFinalized: async () => {}
-    });
-
-    await runtime.handleNotification({
-      method: "item/completed",
-      params: {
-        threadId: "thread-1",
-        item: { id: "tool-1", type: "mcpToolCall", path: "/tmp/google-home.png" }
-      }
-    });
-
-    expect(itemAttachmentCalls).toEqual(["mcpToolCall"]);
-  });
-
   test("clears thinking ticker at finalize start before summary send", async () => {
     const activeTurns = new Map<string, TurnTracker>();
     const tracker = createTracker();
@@ -1362,7 +1174,7 @@ describe("notification runtime ux flow cutover", () => {
     const activeTurns = new Map<string, TurnTracker>();
     const tracker = createTracker();
     activeTurns.set("thread-1", tracker);
-    const chunkedMessages: string[] = [];
+    const sentMessages: string[] = [];
     const statusEdits: string[] = [];
     tracker.statusMessage.edit = async (text: string) => {
       statusEdits.push(text);
@@ -1398,13 +1210,20 @@ describe("notification runtime ux flow cutover", () => {
       buildFileDiffSection: () => "",
       buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
       sendChunkedToChannel: async (_channel: unknown, text: string) => {
-        chunkedMessages.push(text);
+        sentMessages.push(text);
       },
       normalizeFinalSummaryText: (text: string) => text.trim(),
       sanitizeSummaryForDiscord: (text: string) => text,
       truncateStatusText: (text: string) => text,
       isTransientReconnectErrorMessage: () => false,
-      safeSendToChannel: async () => null,
+      safeSendToChannel: async (_channel: unknown, text: string) => {
+        sentMessages.push(text);
+        return {
+          id: `msg-${sentMessages.length}`,
+          channel: tracker.channel,
+          edit: async () => {}
+        };
+      },
       truncateForDiscordMessage: (text: string) => text,
       discordMaxMessageLength: 1900,
       debugLog: () => {},
@@ -1416,7 +1235,7 @@ describe("notification runtime ux flow cutover", () => {
 
     await runtime.handleNotification({
       method: "item/agentMessage/delta",
-      params: { threadId: "thread-1", delta: "I’ll check" }
+      params: { threadId: "thread-1", delta: "I’ll check the existing" }
     });
     await runtime.handleNotification({
       method: "turn/completed",
@@ -1425,13 +1244,13 @@ describe("notification runtime ux flow cutover", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     await runtime.handleNotification({
       method: "item/agentMessage/delta",
-      params: { threadId: "thread-1", delta: " the existing" }
+      params: { threadId: "thread-1", delta: " path and finish the answer." }
     });
 
     await new Promise((resolve) => setTimeout(resolve, 80));
 
     expect(statusEdits.some((value) => value.includes("I’ll check the existing"))).toBe(false);
-    expect(chunkedMessages).toEqual(["I’ll check the existing"]);
+    expect(sentMessages).toEqual(["I’ll check the existing path and finish the answer."]);
     expect(activeTurns.has("thread-1")).toBe(false);
   });
 

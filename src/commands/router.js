@@ -398,54 +398,71 @@ export function createCommandRouter(deps) {
     const supportsAutoDiscovery = registry?.anyPlatformSupports?.("supportsAutoDiscovery") ?? platformId === "discord";
     const isDiscordPlatform = platformId === "discord";
 
-    const lines = [
-      supportsSlashCommands ? "Commands (use `!command` or `/command`):" : `Commands (use \`${prefix}command\`):`
-    ];
+    if (isDiscordPlatform) {
+      const lines = [
+        "Discord quick help",
+        "Plain text: just send a normal message in a bound project channel.",
+        "",
+        "Session",
+        "- `/status` current cwd, model, thread, queue",
+        "- `/where` runtime paths and binding details",
+        "- `/new` clear this channel's Codex thread",
+        "- `/interrupt` stop the active turn",
+        "",
+        "Projects",
+        "- `/repo bind <path>` bind this channel to an existing project",
+        "- `/repo rebind <path>` switch this channel to another project",
+        "- `/repo mkrepo <name>` create channel + project dir + binding",
+        "- `/repo mkbind <name> <path>` create channel + bind existing path",
+        "- `/repo mkchannel <name>` create an empty text channel",
+        "- `/repo unbind` remove the current binding",
+        "",
+        "Models and Agents",
+        "- `/model list` show current and available models",
+        "- `/model set` set a channel model override",
+        "- `/model clear` go back to the default model",
+        "- `/agent list|set|clear` inspect or override the current agent",
+        "",
+        "Ops",
+        "- `/ops resync` refresh managed project channels",
+        "- `/ops rebuild` rebuild managed project channels",
+        "- `/runtime restart [reason]` request a bridge restart",
+        "- `/approval approve|decline|cancel [id]` handle pending approvals",
+        "",
+        "Text command aliases still work, for example `!bind`, `!setmodel`, `!help`.",
+        "One channel = one persistent Codex thread."
+      ];
+
+      if (supportsButtons) {
+        lines.push("Tip: use the Approve/Decline/Cancel buttons when they appear.");
+      }
+
+      return lines.join("\n");
+    }
+
+    const lines = [supportsSlashCommands ? "Feishu quick help" : `Commands (use \`${prefix}command\`):`];
 
     if (supportsRepoBootstrap) {
-      lines.push(`\`${prefix}initrepo [force]\` create/bind repo for this channel using channel name`);
+      lines.push(`- \`${prefix}initrepo [force]\` create or bind a repo for this chat using the chat name`);
     }
-    if (isDiscordPlatform) {
-      lines.push(`\`${prefix}mkchannel <name>\` create a new text channel`);
-      lines.push(
-        `\`${prefix}mkrepo <name>\` create a new text channel and bind a new project directory under WORKSPACE_ROOT`
-      );
-      lines.push(`\`${prefix}mkbind <name> <absolute-path>\` create a new text channel and bind it to a repo/path`);
-      lines.push(`\`${prefix}bind <absolute-path>\` bind this channel to an existing repo/path`);
-      lines.push(`\`${prefix}rebind <absolute-path>\` rebind this channel to a different existing repo/path`);
-      lines.push(`\`${prefix}unbind\` remove repo binding from this channel`);
-      lines.push(`\`${prefix}setmodel <model>\` set an explicit model override for this channel`);
-      lines.push(`\`${prefix}clearmodel\` remove this channel's explicit model override and use the default model`);
-      lines.push(`\`${prefix}setagent <agent-id>\` set an explicit agent override for this channel`);
-      lines.push(`\`${prefix}clearagent\` remove this channel's explicit agent override and use the default agent`);
-    }
-    lines.push(`\`${prefix}setpath <abs-path>\` bind this chat to an existing repo path`);
-    lines.push(`\`${prefix}agents\` show configured agents and current selection`);
-    lines.push(`\`${prefix}models\` show current and configured model ids (Discord slash: \`/model-list\`)`);
-    lines.push(`\`${prefix}ask <prompt>\` send prompt in this repo channel`);
-    lines.push(`\`${prefix}status\` show queue/thread status for this channel`);
-    lines.push(`\`${prefix}new\` reset Codex thread binding for this channel`);
-    lines.push(`\`${prefix}restart [reason]\` request host-managed restart and confirm when back`);
-    lines.push(`\`${prefix}interrupt\` interrupt current turn in this channel`);
-    lines.push(`\`${prefix}where\` show bot runtime paths and binding details`);
-    lines.push(`\`${prefix}approve [id]\` approve the latest (or specified) pending request`);
-    lines.push(`\`${prefix}decline [id]\` decline the latest (or specified) pending request`);
-    lines.push(`\`${prefix}cancel [id]\` cancel the latest (or specified) pending request`);
+    lines.push(`- \`${prefix}status\` current cwd, model, thread, queue`);
+    lines.push(`- \`${prefix}where\` show runtime paths, ids, and binding details`);
+    lines.push(`- \`${prefix}new\` clear this chat's Codex thread`);
+    lines.push(`- \`${prefix}interrupt\` stop the active turn`);
+    lines.push(`- \`${prefix}setpath <abs-path>\` bind this chat to an existing repo path`);
+    lines.push(`- \`${prefix}models\` show current and configured model ids`);
+    lines.push(`- \`${prefix}agents\` show configured agents and current selection`);
+    lines.push(`- \`${prefix}approve|decline|cancel [id]\` handle approvals`);
     if (supportsAutoDiscovery) {
-      lines.push(`\`${prefix}resync\` non-destructive sync with managed project routes`);
-      lines.push(`\`${prefix}rebuild\` destructive rebuild of managed project routes`);
+      lines.push(`- \`${prefix}resync\` refresh managed project routes`);
+      lines.push(`- \`${prefix}rebuild\` rebuild managed project routes`);
     }
-    if (supportsButtons) {
-      lines.push("Tip: use the Approve/Decline/Cancel buttons on approval messages");
-    }
-    lines.push("Model: one chat route = one persistent Codex thread");
-    lines.push("Also supported in #general-style chats: plain chat and commands (read-only, no file writes)");
+    lines.push("Plain text in a mapped chat is treated as a prompt.");
+    lines.push("One chat route = one persistent Codex thread.");
 
     if (!supportsRepoBootstrap && platformId === "feishu") {
-      lines.push("Feishu repo chat bindings are config-driven via `config/channels.json` keys like `feishu:oc_xxx`.");
-    }
-    if (platformId === "feishu") {
-      lines.push("Group chats default to command messages or messages that @mention the bot.");
+      lines.push("Feishu repo bindings are config-driven via `config/channels.json` keys like `feishu:oc_xxx`.");
+      lines.push("Group chats usually require command text or an @mention.");
     }
 
     return lines.join("\n");

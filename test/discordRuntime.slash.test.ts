@@ -2,8 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { ChannelType } from "discord.js";
 import { createDiscordRuntime } from "../src/app/discordRuntime.js";
 
-function createInteraction(commandName: string, options: Record<string, unknown> = {}) {
+function createInteraction(
+  commandName: string,
+  options: Record<string, unknown> = {},
+  extras: { subcommand?: string; isAutocomplete?: boolean; focused?: { name: string; value: string } } = {}
+) {
   const replies: string[] = [];
+  const autocompleteChoices: Array<{ name: string; value: string }> = [];
   const channel = {
     id: "channel-1",
     name: "repo-one",
@@ -21,6 +26,7 @@ function createInteraction(commandName: string, options: Record<string, unknown>
 
   return {
     replies,
+    autocompleteChoices,
     interaction: {
       id: `ix-${commandName}`,
       user: { id: "user-1" },
@@ -38,13 +44,31 @@ function createInteraction(commandName: string, options: Record<string, unknown>
         getBoolean(name: string) {
           const value = options[name];
           return typeof value === "boolean" ? value : null;
+        },
+        getSubcommand(required?: boolean) {
+          if (extras.subcommand) {
+            return extras.subcommand;
+          }
+          if (required === false) {
+            return null;
+          }
+          throw new Error("subcommand not set");
+        },
+        getFocused(withMeta?: boolean) {
+          if (!extras.focused) {
+            return withMeta ? { name: "", value: "" } : "";
+          }
+          return withMeta ? extras.focused : extras.focused.value;
         }
       },
       isButton() {
         return false;
       },
+      isAutocomplete() {
+        return extras.isAutocomplete === true;
+      },
       isChatInputCommand() {
-        return true;
+        return extras.isAutocomplete !== true;
       },
       async deferReply() {
         this.deferred = true;
@@ -65,6 +89,9 @@ function createInteraction(commandName: string, options: Record<string, unknown>
         const text = typeof content === "string" ? content : String(content?.content ?? "");
         replies.push(text);
         return statusMessage;
+      },
+      async respond(choices: Array<{ name: string; value: string }>) {
+        autocompleteChoices.push(...choices);
       }
     }
   };
@@ -122,29 +149,54 @@ function createRuntime(overrides: Record<string, unknown> = {}) {
     },
     buildCommandTextFromInteraction: (interaction: {
       commandName: string;
-      options: { getString: (name: string) => string | null; getBoolean: (name: string) => boolean | null };
+      options: {
+        getString: (name: string) => string | null;
+        getBoolean: (name: string) => boolean | null;
+        getSubcommand?: (required?: boolean) => string | null;
+      };
     }) => {
+      const subcommand = interaction.options.getSubcommand?.(false) ?? "";
       switch (interaction.commandName) {
         case "status":
           return "!status";
-        case "models":
-        case "model-list":
-          return "!models";
-        case "resync":
-          return "!resync";
-        case "rebuild":
-          return "!rebuild";
-        case "setpath":
-        case "bind":
-        case "rebind":
-          return `!${interaction.commandName} ${interaction.options.getString("path") ?? ""}`.trim();
-        case "mkchannel":
-        case "mkrepo":
-          return `!${interaction.commandName} ${interaction.options.getString("name") ?? ""}`.trim();
-        case "mkbind":
-          return `!mkbind ${interaction.options.getString("name") ?? ""} ${interaction.options.getString("path") ?? ""}`.trim();
-        case "initrepo":
-          return interaction.options.getBoolean("force") ? "!initrepo force" : "!initrepo";
+        case "runtime":
+          if (subcommand === "status") return "!status";
+          if (subcommand === "restart") return `!restart ${interaction.options.getString("reason") ?? ""}`.trim();
+          if (subcommand === "interrupt") return "!interrupt";
+          if (subcommand === "where") return "!where";
+          if (subcommand === "help") return "!help";
+          return "";
+        case "model":
+          if (subcommand === "list") return "!models";
+          if (subcommand === "set") return `!setmodel ${interaction.options.getString("model") ?? ""}`.trim();
+          if (subcommand === "clear") return "!clearmodel";
+          return "";
+        case "agent":
+          if (subcommand === "list") return "!agents";
+          if (subcommand === "set") return `!setagent ${interaction.options.getString("agent") ?? ""}`.trim();
+          if (subcommand === "clear") return "!clearagent";
+          return "";
+        case "ops":
+          if (subcommand === "resync") return "!resync";
+          if (subcommand === "rebuild") return "!rebuild";
+          return "";
+        case "repo":
+          if (subcommand === "bind" || subcommand === "rebind" || subcommand === "setpath") {
+            return `!${subcommand === "setpath" ? "setpath" : subcommand} ${interaction.options.getString("path") ?? ""}`.trim();
+          }
+          if (subcommand === "mkchannel" || subcommand === "mkrepo") {
+            return `!${subcommand} ${interaction.options.getString("name") ?? ""}`.trim();
+          }
+          if (subcommand === "mkbind") {
+            return `!mkbind ${interaction.options.getString("name") ?? ""} ${interaction.options.getString("path") ?? ""}`.trim();
+          }
+          if (subcommand === "init") {
+            return interaction.options.getBoolean("force") ? "!initrepo force" : "!initrepo";
+          }
+          if (subcommand === "unbind") return "!unbind";
+          return "";
+        case "approval":
+          return `!${subcommand} ${interaction.options.getString("id") ?? ""}`.trim();
         default:
           return `!${interaction.commandName} ${interaction.options.getString("reason") ?? interaction.options.getString("model") ?? interaction.options.getString("agent") ?? ""}`.trim();
       }
@@ -172,6 +224,19 @@ function createRuntime(overrides: Record<string, unknown> = {}) {
     handleUnbindCommand: async (message: { reply: (text: string) => Promise<unknown> }) => {
       calls.push({ type: "unbind", payload: null });
       await message.reply("unbind");
+    },
+    buildAutocompleteChoices: ({ interaction }: { interaction: { commandName: string; options: { getSubcommand?: (required?: boolean) => string | null } } }) => {
+      const subcommand = interaction.options.getSubcommand?.(false);
+      if (interaction.commandName === "model" && subcommand === "set") {
+        return [
+          { name: "gpt-5.3-codex (default)", value: "gpt-5.3-codex" },
+          { name: "gpt-5.4", value: "gpt-5.4" }
+        ];
+      }
+      if (interaction.commandName === "agent" && subcommand === "set") {
+        return [{ name: "builder (enabled, gpt-5.3-codex)", value: "builder" }];
+      }
+      return [];
     },
     registerSlashCommands: async () => ({ scope: "guild", guildId: "guild-1", count: 26 }),
     parseApprovalButtonCustomId: () => null,
@@ -219,7 +284,7 @@ describe("discord runtime slash commands", () => {
     const { runtime, calls } = createRuntime({
       resolveRepoContext: () => null
     });
-    const { interaction } = createInteraction("resync");
+    const { interaction } = createInteraction("ops", {}, { subcommand: "resync" });
 
     await runtime.handleInteraction(interaction);
 
@@ -230,7 +295,7 @@ describe("discord runtime slash commands", () => {
     const { runtime, calls } = createRuntime({
       resolveRepoContext: () => null
     });
-    const { interaction, replies } = createInteraction("bind", { path: "/tmp/repo-two" });
+    const { interaction, replies } = createInteraction("repo", { path: "/tmp/repo-two" }, { subcommand: "bind" });
 
     await runtime.handleInteraction(interaction);
 
@@ -242,7 +307,7 @@ describe("discord runtime slash commands", () => {
     const { runtime, calls } = createRuntime({
       resolveRepoContext: () => null
     });
-    const { interaction, replies } = createInteraction("mkrepo", { name: "repo-two" });
+    const { interaction, replies } = createInteraction("repo", { name: "repo-two" }, { subcommand: "mkrepo" });
 
     await runtime.handleInteraction(interaction);
 
@@ -250,11 +315,11 @@ describe("discord runtime slash commands", () => {
     expect(replies).toEqual(["make-channel repo-two"]);
   });
 
-  test("handles /model-list without requiring existing repo context", async () => {
+  test("handles /model list without requiring existing repo context", async () => {
     const { runtime, calls } = createRuntime({
       resolveRepoContext: () => null
     });
-    const { interaction, replies } = createInteraction("model-list");
+    const { interaction, replies } = createInteraction("model", {}, { subcommand: "list" });
 
     await runtime.handleInteraction(interaction);
 
@@ -268,6 +333,35 @@ describe("discord runtime slash commands", () => {
       }
     ]);
     expect(replies).toEqual(["handled !models"]);
+  });
+
+  test("responds to model autocomplete requests", async () => {
+    const { runtime } = createRuntime();
+    const { interaction, autocompleteChoices } = createInteraction(
+      "model",
+      {},
+      { subcommand: "set", isAutocomplete: true, focused: { name: "model", value: "gpt" } }
+    );
+
+    await runtime.handleInteraction(interaction);
+
+    expect(autocompleteChoices).toEqual([
+      { name: "gpt-5.3-codex (default)", value: "gpt-5.3-codex" },
+      { name: "gpt-5.4", value: "gpt-5.4" }
+    ]);
+  });
+
+  test("responds to agent autocomplete requests", async () => {
+    const { runtime } = createRuntime();
+    const { interaction, autocompleteChoices } = createInteraction(
+      "agent",
+      {},
+      { subcommand: "set", isAutocomplete: true, focused: { name: "agent", value: "bui" } }
+    );
+
+    await runtime.handleInteraction(interaction);
+
+    expect(autocompleteChoices).toEqual([{ name: "builder (enabled, gpt-5.3-codex)", value: "builder" }]);
   });
 
   test("auto-initializes a new text channel created under the managed projects category", async () => {

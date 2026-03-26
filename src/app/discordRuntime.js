@@ -28,6 +28,7 @@ export function createDiscordRuntime(deps) {
     handleBindCommand,
     handleUnbindCommand,
     buildCommandTextFromInteraction,
+    buildAutocompleteChoices,
     registerSlashCommands,
     parseApprovalButtonCustomId,
     approvalButtonPrefix,
@@ -166,6 +167,16 @@ export function createDiscordRuntime(deps) {
       return;
     }
 
+    if (interaction.isAutocomplete?.()) {
+      const choices = buildAutocompleteChoices?.({
+        interaction,
+        config,
+        getChannelSetups
+      }) ?? [];
+      await interaction.respond(choices).catch(() => {});
+      return;
+    }
+
     if (!interaction.isChatInputCommand()) {
       return;
     }
@@ -185,23 +196,24 @@ export function createDiscordRuntime(deps) {
       return;
     }
     const message = createInteractionMessageAdapter(interaction);
+    const lowerCommandText = commandText.toLowerCase();
 
-    if (interaction.commandName === "help") {
+    if (lowerCommandText === "!help") {
       await safeReply(message, getHelpText({ platformId: "discord" }));
       return;
     }
 
-    if (interaction.commandName === "resync") {
+    if (lowerCommandText === "!resync") {
       await runManagedRouteCommand(message, { forceRebuild: false });
       return;
     }
 
-    if (interaction.commandName === "rebuild") {
+    if (lowerCommandText === "!rebuild") {
       await runManagedRouteCommand(message, { forceRebuild: true });
       return;
     }
 
-    if (interaction.commandName === "initrepo") {
+    if (lowerCommandText.startsWith("!initrepo")) {
       if (isCommandSupportedForPlatform && !isCommandSupportedForPlatform("initrepo", "discord")) {
         await safeReply(message, "This platform does not support `initrepo`.");
         return;
@@ -211,48 +223,48 @@ export function createDiscordRuntime(deps) {
       return;
     }
 
-    if (interaction.commandName === "setpath") {
+    if (lowerCommandText.startsWith("!setpath")) {
       const rest = commandText.replace(/^!setpath\b/i, "").trim();
       await handleSetPathCommand(message, rest);
       return;
     }
 
-    if (interaction.commandName === "mkchannel") {
+    if (lowerCommandText.startsWith("!mkchannel")) {
       const rest = commandText.replace(/^!mkchannel\b/i, "").trim();
       await handleMakeChannelCommand(message, rest);
       return;
     }
 
-    if (interaction.commandName === "mkrepo") {
+    if (lowerCommandText.startsWith("!mkrepo")) {
       const rest = commandText.replace(/^!mkrepo\b/i, "").trim();
       await handleMakeChannelCommand(message, rest, { initRepo: true });
       return;
     }
 
-    if (interaction.commandName === "mkbind") {
+    if (lowerCommandText.startsWith("!mkbind")) {
       const rest = commandText.replace(/^!mkbind\b/i, "").trim();
       await handleMakeChannelCommand(message, rest, { bindPath: true });
       return;
     }
 
-    if (interaction.commandName === "bind") {
+    if (lowerCommandText.startsWith("!bind")) {
       const rest = commandText.replace(/^!bind\b/i, "").trim();
       await handleBindCommand(message, rest);
       return;
     }
 
-    if (interaction.commandName === "rebind") {
+    if (lowerCommandText.startsWith("!rebind")) {
       const rest = commandText.replace(/^!rebind\b/i, "").trim();
       await handleBindCommand(message, rest, { rebind: true });
       return;
     }
 
-    if (interaction.commandName === "unbind") {
+    if (lowerCommandText === "!unbind") {
       await handleUnbindCommand(message);
       return;
     }
 
-    if (interaction.commandName === "models" || interaction.commandName === "model-list") {
+    if (lowerCommandText === "!models") {
       const context = resolveRepoContext(message, {
         channelSetups: getChannelSetups(),
         config,

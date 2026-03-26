@@ -48,6 +48,11 @@ export async function startBridgeRuntime({
       continue;
     }
 
+    if (summary?.platformId === "discord" && summary?.started) {
+      const discordSegmentedStreaming = process.env.DISCORD_SEGMENTED_STREAMING === "1";
+      console.log(`discord segmented streaming=${discordSegmentedStreaming ? "enabled" : "disabled"}`);
+    }
+
     if (summary?.platformId === "feishu" && summary?.started) {
       if (summary?.transport === "long-connection") {
         console.log("feishu transport ready (mode=long-connection)");

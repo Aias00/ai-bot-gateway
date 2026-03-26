@@ -278,25 +278,28 @@ curl -i http://127.0.0.1:8788/readyz
 | Ask | `!ask <prompt>` | `/ask prompt:<text>` | `/ask <prompt>` | Repo channel or mapped chat |
 | Status | `!status` | `/status` | `/status` | Queue depth, thread, sandbox, mode |
 | New thread | `!new` | `/new` | `/new` | Clears current Codex thread binding |
-| Restart | `!restart [reason]` | `/restart` | `/restart [reason]` | Requires supervisor/service to act on restart file |
+| Restart | `!restart [reason]` | `/runtime restart` | `/restart [reason]` | Requires supervisor/service to act on restart file |
 | Interrupt | `!interrupt` | `/interrupt` | `/interrupt` | Interrupts current turn |
-| Where | `!where` | `/where` | `/where` | Shows cwd, state path, thread binding; on Feishu it also helps discover identifiers before binding |
-| Set path | `!setpath <abs-path>` | `/setpath path:<abs-path>` | `/setpath <abs-path>` | Rebinds the current chat to an existing repo path and clears the current Codex thread binding |
-| Approve | `!approve [id]` | `/approve [id]` | `/approve [id]` | Uses latest pending approval if no id |
-| Decline | `!decline [id]` | `/decline [id]` | `/decline [id]` | Same routing rules as approve |
-| Cancel | `!cancel [id]` | `/cancel [id]` | `/cancel [id]` | Same routing rules as approve |
-| Init repo | `!initrepo [force]` | `/initrepo` | Not supported | Discord only, requires `WORKSPACE_ROOT` |
-| Create channel | `!mkchannel <name>` | Not supported | Not supported | Discord only, requires `Manage Channels` |
-| Create repo channel | `!mkrepo <name>` | Not supported | Not supported | Creates a new Discord text channel plus a repo binding under `WORKSPACE_ROOT` |
-| Create bound channel | `!mkbind <name> <abs-path>` | Not supported | Not supported | Creates a new Discord text channel already bound to an existing absolute path |
-| Bind | `!bind <abs-path>` | Not supported | Not supported | Binds the current Discord channel to an existing absolute path |
-| Rebind | `!rebind <abs-path>` | Not supported | Not supported | Switches the current Discord channel to a different absolute path |
-| Unbind | `!unbind` | Not supported | Not supported | Removes the current Discord channel binding |
-| Models | `!models` | `/model-list` | `/models` | Shows the current channel model plus configured model ids |
-| Set model | `!setmodel <model>` | Not supported | Not supported | Persists a per-channel model override |
-| Clear model | `!clearmodel` | Not supported | Not supported | Removes the per-channel model override |
-| Resync | `!resync` | `/resync` | `/resync` | Re-syncs Discord managed channels |
-| Rebuild | `!rebuild` | `/rebuild` | `/rebuild` | Recreates managed Discord project channels |
+| Where | `!where` | `/where` or `/runtime where` | `/where` | Shows cwd, state path, thread binding; on Feishu it also helps discover identifiers before binding |
+| Set path | `!setpath <abs-path>` | `/repo setpath path:<abs-path>` | `/setpath <abs-path>` | Rebinds the current chat to an existing repo path and clears the current Codex thread binding |
+| Approve | `!approve [id]` | `/approval approve [id]` | `/approve [id]` | Uses latest pending approval if no id |
+| Decline | `!decline [id]` | `/approval decline [id]` | `/decline [id]` | Same routing rules as approve |
+| Cancel | `!cancel [id]` | `/approval cancel [id]` | `/cancel [id]` | Same routing rules as approve |
+| Init repo | `!initrepo [force]` | `/repo init` | Not supported | Discord only, requires `WORKSPACE_ROOT` |
+| Create channel | `!mkchannel <name>` | `/repo mkchannel` | Not supported | Discord only, requires `Manage Channels` |
+| Create repo channel | `!mkrepo <name>` | `/repo mkrepo` | Not supported | Creates a new Discord text channel plus a repo binding under `WORKSPACE_ROOT` |
+| Create bound channel | `!mkbind <name> <abs-path>` | `/repo mkbind` | Not supported | Creates a new Discord text channel already bound to an existing absolute path |
+| Bind | `!bind <abs-path>` | `/repo bind` | Not supported | Binds the current Discord channel to an existing absolute path |
+| Rebind | `!rebind <abs-path>` | `/repo rebind` | Not supported | Switches the current Discord channel to a different absolute path |
+| Unbind | `!unbind` | `/repo unbind` | Not supported | Removes the current Discord channel binding |
+| Models | `!models` | `/model list` | `/models` | Shows the current channel model plus configured model ids |
+| Set model | `!setmodel <model>` | `/model set` | Not supported | Persists a per-channel model override |
+| Clear model | `!clearmodel` | `/model clear` | Not supported | Removes the per-channel model override |
+| Agents | `!agents` | `/agent list` | `/agents` | Shows configured agents and current selection |
+| Set agent | `!setagent <agent-id>` | `/agent set` | Not supported | Persists a per-channel agent override |
+| Clear agent | `!clearagent` | `/agent clear` | Not supported | Removes the per-channel agent override |
+| Resync | `!resync` | `/ops resync` | `/resync` | Re-syncs Discord managed channels |
+| Rebuild | `!rebuild` | `/ops rebuild` | `/rebuild` | Recreates managed Discord project channels |
 
 Approval buttons are available on Discord when approvals are enabled.
 
@@ -749,7 +752,7 @@ Before enabling, set at least:
 - `!mkrepo` uses `WORKSPACE_ROOT`; it creates the project folder from the final channel name and binds the new channel without running `git init`.
 - `!mkchannel` and `!mkbind` require Discord `Manage Channels`.
 - `!bind` and `!rebind` persist the `codex-cwd:` topic tag so bindings survive restarts without editing `config/channels.json`.
-- `!models` shows the current channel model and configured model ids, which is the quickest way to discover what you can switch to. Discord slash users can use `/model-list`.
+- `!models` shows the current channel model and configured model ids, which is the quickest way to discover what you can switch to. Discord slash users can use `/model list`.
 - `!setmodel` persists a per-channel model override; `!clearmodel` removes it so the channel falls back to `defaultModel`.
 - In `workspace-write`, Git metadata roots such as `--git-dir` and `--git-common-dir` are added automatically so worktrees still function correctly.
 - `CODEX_EXTRA_WRITABLE_ROOTS` can extend writable roots when tooling stores state outside the repo.

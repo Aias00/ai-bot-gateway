@@ -20,6 +20,7 @@ export function buildNotificationRuntime(deps) {
     discordMaxMessageLength = 1900,
     feishuMaxMessageLength = 8000,
     disableStreamingOutput = false,
+    discordSegmentedStreaming = false,
     feishuSegmentedStreaming = false,
     feishuStreamMinChars = 80
   } = deps;
@@ -47,6 +48,7 @@ export function buildNotificationRuntime(deps) {
     discordMaxMessageLength,
     feishuMaxMessageLength,
     disableStreamingOutput,
+    discordSegmentedStreaming,
     feishuSegmentedStreaming,
     feishuStreamMinChars,
     debugLog,

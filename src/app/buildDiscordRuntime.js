@@ -1,5 +1,5 @@
 import { resolveRepoContext } from "../channels/context.js";
-import { buildCommandTextFromInteraction, syncSlashCommands } from "../commands/slashCommands.js";
+import { buildAutocompleteChoices, buildCommandTextFromInteraction, syncSlashCommands } from "../commands/slashCommands.js";
 import { parseApprovalButtonCustomId } from "../codex/approvalPayloads.js";
 import { createDiscordRuntime } from "./discordRuntime.js";
 
@@ -56,6 +56,7 @@ export function buildDiscordRuntime(deps) {
     handleBindCommand,
     handleUnbindCommand,
     buildCommandTextFromInteraction,
+    buildAutocompleteChoices,
     registerSlashCommands: async () => await syncSlashCommands({ discord }),
     parseApprovalButtonCustomId,
     approvalButtonPrefix,
