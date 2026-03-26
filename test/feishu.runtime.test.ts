@@ -1276,6 +1276,250 @@ describe("feishu runtime", () => {
     expect(await fs.readFile(imagePath)).toEqual(Buffer.from([1, 2, 3, 4]));
   });
 
+  test("uses sender's latest image for @follow-up prompts in groups when mention is required", async () => {
+    const jobs: Array<{ repoChannelId: string; promptText: string; imagePaths: string[] }> = [];
+    const routeId = makeFeishuRouteId("oc_repo_image_followup_1");
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-image-followup-test-"));
+    const fetchUrls: string[] = [];
+
+    globalThis.fetch = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      fetchUrls.push(url);
+      if (url.includes("/tenant_access_token/internal")) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: "tenant-token", expire: 7200 }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.includes("/open-apis/im/v1/messages/om_group_image_1/resources/img_group_resource_1?type=image")) {
+        return new Response(new Uint8Array([9, 8, 7, 6]), {
+          status: 200,
+          headers: { "content-type": "image/png" }
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    };
+
+    const runtime = createFeishuRuntime({
+      config: {
+        defaultModel: "gpt-5.3-codex",
+        sandboxMode: "workspace-write",
+        allowedFeishuUserIds: []
+      },
+      runtimeEnv: {
+        feishuEnabled: true,
+        feishuAppId: "cli_test",
+        feishuAppSecret: "secret",
+        feishuVerificationToken: "",
+        feishuTransport: "long-connection",
+        feishuPort: 8788,
+        feishuHost: "127.0.0.1",
+        feishuWebhookPath: "/feishu/events",
+        imageCacheDir: tempDir,
+        feishuGeneralChatId: "",
+        feishuGeneralCwd: "/tmp/general",
+        feishuRequireMentionInGroup: true,
+        feishuRecentImageWindowMs: 180_000
+      },
+      getChannelSetups: () => ({
+        [routeId]: {
+          cwd: "/tmp/repo-image-followup",
+          model: "gpt-5.3-codex"
+        }
+      }),
+      runManagedRouteCommand: async () => {},
+      getHelpText: () => "help text",
+      isCommandSupportedForPlatform: () => false,
+      handleCommand: async () => {},
+      runtimeAdapters: {
+        buildTurnInputFromMessage: async (_message: unknown, text: string, imageAttachments: Array<{ path: string }>) => [
+          { type: "text", text },
+          ...imageAttachments.map((attachment) => ({ type: "localImage", path: attachment.path }))
+        ].filter((item) => item.type !== "text" || item.text),
+        enqueuePrompt: (repoChannelId: string, job: { inputItems: Array<{ text?: string; path?: string }> }) => {
+          jobs.push({
+            repoChannelId,
+            promptText: job.inputItems.find((item) => typeof item.text === "string")?.text ?? "",
+            imagePaths: job.inputItems.map((item) => item.path).filter(Boolean) as string[]
+          });
+        }
+      },
+      safeReply: async () => null
+    });
+
+    await runtime.handleEventPayload({
+      header: {
+        event_id: "evt-group-image-1",
+        event_type: "im.message.receive_v1"
+      },
+      event: {
+        sender: {
+          sender_id: { open_id: "ou_group_user_1" },
+          sender_type: "user"
+        },
+        message: {
+          message_id: "om_group_image_1",
+          chat_id: "oc_repo_image_followup_1",
+          chat_type: "group",
+          message_type: "image",
+          content: JSON.stringify({ image_key: "img_group_resource_1" }),
+          mentions: []
+        }
+      }
+    });
+
+    await runtime.handleEventPayload({
+      header: {
+        event_id: "evt-group-followup-1",
+        event_type: "im.message.receive_v1"
+      },
+      event: {
+        sender: {
+          sender_id: { open_id: "ou_group_user_1" },
+          sender_type: "user"
+        },
+        message: {
+          message_id: "om_group_followup_1",
+          chat_id: "oc_repo_image_followup_1",
+          chat_type: "group",
+          message_type: "text",
+          content: JSON.stringify({ text: "@_user_1 这张图是什么？" }),
+          mentions: [{ key: "@_user_1" }]
+        }
+      }
+    });
+
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.repoChannelId).toBe(routeId);
+    expect(jobs[0]?.promptText).toContain("这张图是什么");
+    expect(jobs[0]?.imagePaths).toHaveLength(1);
+    const imagePath = jobs[0]?.imagePaths[0] ?? "";
+    expect(imagePath.startsWith(tempDir)).toBe(true);
+    expect(await fs.readFile(imagePath)).toEqual(Buffer.from([9, 8, 7, 6]));
+    expect(fetchUrls.filter((url) => url.includes("/resources/")).length).toBe(1);
+  });
+
+  test("accepts group reply follow-up without mention when replying to a cached image message", async () => {
+    const jobs: Array<{ repoChannelId: string; promptText: string; imagePaths: string[] }> = [];
+    const routeId = makeFeishuRouteId("oc_repo_image_reply_1");
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "feishu-image-reply-test-"));
+
+    globalThis.fetch = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/tenant_access_token/internal")) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: "tenant-token", expire: 7200 }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.includes("/open-apis/im/v1/messages/om_reply_source_image_1/resources/img_reply_resource_1?type=image")) {
+        return new Response(new Uint8Array([4, 3, 2, 1]), {
+          status: 200,
+          headers: { "content-type": "image/png" }
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    };
+
+    const runtime = createFeishuRuntime({
+      config: {
+        defaultModel: "gpt-5.3-codex",
+        sandboxMode: "workspace-write",
+        allowedFeishuUserIds: []
+      },
+      runtimeEnv: {
+        feishuEnabled: true,
+        feishuAppId: "cli_test",
+        feishuAppSecret: "secret",
+        feishuVerificationToken: "",
+        feishuTransport: "long-connection",
+        feishuPort: 8788,
+        feishuHost: "127.0.0.1",
+        feishuWebhookPath: "/feishu/events",
+        imageCacheDir: tempDir,
+        feishuGeneralChatId: "",
+        feishuGeneralCwd: "/tmp/general",
+        feishuRequireMentionInGroup: true,
+        feishuRecentImageWindowMs: 180_000
+      },
+      getChannelSetups: () => ({
+        [routeId]: {
+          cwd: "/tmp/repo-image-reply",
+          model: "gpt-5.3-codex"
+        }
+      }),
+      runManagedRouteCommand: async () => {},
+      getHelpText: () => "help text",
+      isCommandSupportedForPlatform: () => false,
+      handleCommand: async () => {},
+      runtimeAdapters: {
+        buildTurnInputFromMessage: async (_message: unknown, text: string, imageAttachments: Array<{ path: string }>) => [
+          { type: "text", text },
+          ...imageAttachments.map((attachment) => ({ type: "localImage", path: attachment.path }))
+        ].filter((item) => item.type !== "text" || item.text),
+        enqueuePrompt: (repoChannelId: string, job: { inputItems: Array<{ text?: string; path?: string }> }) => {
+          jobs.push({
+            repoChannelId,
+            promptText: job.inputItems.find((item) => typeof item.text === "string")?.text ?? "",
+            imagePaths: job.inputItems.map((item) => item.path).filter(Boolean) as string[]
+          });
+        }
+      },
+      safeReply: async () => null
+    });
+
+    await runtime.handleEventPayload({
+      header: {
+        event_id: "evt-reply-image-1",
+        event_type: "im.message.receive_v1"
+      },
+      event: {
+        sender: {
+          sender_id: { open_id: "ou_group_user_reply_1" },
+          sender_type: "user"
+        },
+        message: {
+          message_id: "om_reply_source_image_1",
+          chat_id: "oc_repo_image_reply_1",
+          chat_type: "group",
+          message_type: "image",
+          content: JSON.stringify({ image_key: "img_reply_resource_1" }),
+          mentions: []
+        }
+      }
+    });
+
+    await runtime.handleEventPayload({
+      header: {
+        event_id: "evt-reply-followup-1",
+        event_type: "im.message.receive_v1"
+      },
+      event: {
+        sender: {
+          sender_id: { open_id: "ou_group_user_reply_1" },
+          sender_type: "user"
+        },
+        message: {
+          message_id: "om_reply_followup_1",
+          parent_id: "om_reply_source_image_1",
+          chat_id: "oc_repo_image_reply_1",
+          chat_type: "group",
+          message_type: "text",
+          content: JSON.stringify({ text: "帮我看下这张图" }),
+          mentions: []
+        }
+      }
+    });
+
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.repoChannelId).toBe(routeId);
+    expect(jobs[0]?.promptText).toContain("帮我看下这张图");
+    expect(jobs[0]?.imagePaths).toHaveLength(1);
+    const imagePath = jobs[0]?.imagePaths[0] ?? "";
+    expect(imagePath.startsWith(tempDir)).toBe(true);
+    expect(await fs.readFile(imagePath)).toEqual(Buffer.from([4, 3, 2, 1]));
+  });
+
   test("queues file prompts for mapped chats by downloading the Feishu resource into a local file attachment", async () => {
     const jobs: Array<{ repoChannelId: string; filePaths: string[]; contentTypes: string[] }> = [];
     const routeId = makeFeishuRouteId("oc_repo_file_1");

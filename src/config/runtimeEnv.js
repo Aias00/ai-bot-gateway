@@ -47,6 +47,7 @@ export function loadRuntimeEnv() {
     heartbeatIntervalMs,
     feishuStreamMinChars,
     feishuEventDedupeTtlMs,
+    feishuRecentImageWindowMs,
     backendHttpPort,
     feishuPort
   } = parseRuntimeNumericConfig(process.env);
@@ -175,6 +176,7 @@ export function loadRuntimeEnv() {
     feishuSegmentedStreaming,
     feishuStreamMinChars,
     feishuEventDedupeTtlMs,
+    feishuRecentImageWindowMs,
     feishuEventDedupePath,
     feishuUnboundChatMode,
     feishuUnboundChatCwd,

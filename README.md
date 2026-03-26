@@ -331,6 +331,7 @@ Use `.env.example` as the exhaustive reference. The most important variables are
 | `FEISHU_ALLOWED_OPEN_IDS` | Optional comma-separated Feishu allowlist |
 | `FEISHU_GENERAL_CHAT_ID` | Optional read-only Feishu general chat |
 | `FEISHU_REQUIRE_MENTION_IN_GROUP` | Require mention for plain prompts in group chats |
+| `FEISHU_RECENT_IMAGE_WINDOW_MS` | Window for matching "latest image" context in group follow-up prompts (default `180000`) |
 | `FEISHU_UNBOUND_CHAT_MODE` | Feishu fallback for unmapped chats; defaults to `open` |
 | `FEISHU_UNBOUND_CHAT_CWD` | Optional override for open unmapped Feishu chats; defaults to `WORKSPACE_ROOT`, then the bridge cwd |
 | `BACKEND_HTTP_ENABLED` | Forces backend HTTP server on; enabled automatically when Feishu is configured |
@@ -630,6 +631,7 @@ This is the shortest reliable way to bring Feishu online with the current bridge
 - `FEISHU_GENERAL_CHAT_ID` creates one read-only general chat, similar to Discord `#general`.
 - `FEISHU_UNBOUND_CHAT_MODE=open` accepts unmapped Feishu chats immediately and grants the same sandbox/file-write capability as configured repo chats.
 - If `FEISHU_REQUIRE_MENTION_IN_GROUP=1`, plain prompts in group chats need an `@mention`; slash-style commands such as `/status` still work.
+- Feishu group image follow-ups support both flows: reply to an earlier image (with or without `@`) or send `@bot + text` within `FEISHU_RECENT_IMAGE_WINDOW_MS` after posting an image.
 - Feishu now supports inbound image messages, segmented streaming text output, plus outbound image and file uploads. Unsupported outbound attachment types still fall back to text notices.
 - Segmented streaming replies are disabled by default. Set `FEISHU_SEGMENTED_STREAMING=1` to enable them.
 - Optional `FEISHU_STREAM_MIN_CHARS` controls flush threshold for segmented streaming (default `80`).

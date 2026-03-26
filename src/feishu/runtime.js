@@ -38,6 +38,7 @@ export function createFeishuRuntime(deps) {
     feishuLogIngress,
     feishuEventDedupePath,
     feishuEventDedupeTtlMs,
+    feishuRecentImageWindowMs,
     feishuUnboundChatMode,
     feishuUnboundChatCwd,
     feishuStatusReactions
@@ -46,6 +47,8 @@ export function createFeishuRuntime(deps) {
   const sentMessages = new Map();
   const recentOutgoingTextByChat = new Map();
   const inboundMessageChainsByRoute = new Map();
+  const inboundMediaByMessageId = new Map();
+  const inboundMediaByRouteAndSender = new Map();
   let persistSeenEventsTimer = null;
   const seenEventsPersistPath =
     typeof feishuEventDedupePath === "string" && feishuEventDedupePath.trim()
@@ -55,6 +58,8 @@ export function createFeishuRuntime(deps) {
     Number.isFinite(feishuEventDedupeTtlMs) && feishuEventDedupeTtlMs > 0
       ? feishuEventDedupeTtlMs
       : 24 * 60 * 60 * 1000;
+  const recentImageWindowMs =
+    Number.isFinite(feishuRecentImageWindowMs) && feishuRecentImageWindowMs > 0 ? feishuRecentImageWindowMs : 3 * 60 * 1000;
   const transport = normalizeFeishuTransport(feishuTransport);
   const proxyUrl = getProxyUrl();
   const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : null;
@@ -237,7 +242,9 @@ export function createFeishuRuntime(deps) {
       });
       return;
     }
-    const handlingDecision = resolveIncomingHandlingDecision(message, text, feishuRequireMentionInGroup);
+    const handlingDecision = resolveIncomingHandlingDecision(message, text, feishuRequireMentionInGroup, {
+      allowGroupReplyWithoutMention: true
+    });
     if (!handlingDecision.allowed) {
       logInboundIngress("drop_routing", {
         ...ingressFields,
@@ -412,7 +419,18 @@ export function createFeishuRuntime(deps) {
     }
 
     const preparedPromptText = prepareFeishuPromptText(resolvedText);
-    const inputItems = await runtimeAdapters.buildTurnInputFromMessage(inboundMessage, preparedPromptText, [], context.setup);
+    const inboundAttachments = await resolveInboundAttachmentsForPrompt({
+      message,
+      senderOpenId,
+      routeId: inboundMessage.channelId,
+      chatId: inboundMessage.channel?.chatId ?? ""
+    });
+    const inputItems = await runtimeAdapters.buildTurnInputFromMessage(
+      inboundMessage,
+      preparedPromptText,
+      inboundAttachments,
+      context.setup
+    );
     if (inputItems.length === 0) {
       logInboundIngress("drop_empty_input_items", {
         ...ingressFields,
@@ -494,6 +512,12 @@ export function createFeishuRuntime(deps) {
   }
 
   async function handleInboundImageMessage({ inboundMessage, senderOpenId, message }) {
+    rememberInboundMediaEvent({
+      routeId: inboundMessage?.channelId,
+      senderOpenId,
+      messageType: "image",
+      message
+    });
     const handlingDecision = resolveIncomingHandlingDecision(message, "", feishuRequireMentionInGroup);
     if (!handlingDecision.allowed) {
       logInboundIngress("drop_image_routing", {
@@ -557,6 +581,12 @@ export function createFeishuRuntime(deps) {
   }
 
   async function handleInboundFileMessage({ inboundMessage, senderOpenId, message }) {
+    rememberInboundMediaEvent({
+      routeId: inboundMessage?.channelId,
+      senderOpenId,
+      messageType: "file",
+      message
+    });
     const handlingDecision = resolveIncomingHandlingDecision(message, "", feishuRequireMentionInGroup);
     if (!handlingDecision.allowed) {
       logInboundIngress("drop_file_routing", {
@@ -1229,6 +1259,130 @@ export function createFeishuRuntime(deps) {
     return `选择第${normalizedText}项：${selectedOptionText}`;
   }
 
+  function rememberInboundMediaEvent({ routeId, senderOpenId, messageType, message }) {
+    const normalizedRouteId = String(routeId ?? "").trim();
+    const normalizedSenderOpenId = String(senderOpenId ?? "").trim();
+    const messageId = String(message?.message_id ?? "").trim();
+    if (!normalizedRouteId || !normalizedSenderOpenId || !messageId) {
+      return;
+    }
+
+    pruneInboundMediaIndexes();
+
+    const now = Date.now();
+    const entry = {
+      routeId: normalizedRouteId,
+      senderOpenId: normalizedSenderOpenId,
+      messageId,
+      messageType,
+      message,
+      receivedAt: now,
+      attachment: null
+    };
+    inboundMediaByMessageId.set(messageId, entry);
+
+    const routeSenderKey = `${normalizedRouteId}:${normalizedSenderOpenId}`;
+    const senderEntries = inboundMediaByRouteAndSender.get(routeSenderKey) ?? [];
+    const filtered = senderEntries.filter((item) => String(item?.messageId ?? "") !== messageId);
+    filtered.unshift(entry);
+    inboundMediaByRouteAndSender.set(routeSenderKey, filtered.slice(0, 20));
+  }
+
+  function pruneInboundMediaIndexes() {
+    const threshold = Date.now() - recentImageWindowMs;
+    for (const [messageId, entry] of inboundMediaByMessageId.entries()) {
+      if (!entry || !Number.isFinite(entry.receivedAt) || entry.receivedAt < threshold) {
+        inboundMediaByMessageId.delete(messageId);
+      }
+    }
+
+    for (const [key, entries] of inboundMediaByRouteAndSender.entries()) {
+      const filtered = Array.isArray(entries)
+        ? entries.filter((entry) => {
+            if (!entry || !Number.isFinite(entry.receivedAt) || entry.receivedAt < threshold) {
+              return false;
+            }
+            return inboundMediaByMessageId.get(String(entry.messageId ?? "")) === entry;
+          })
+        : [];
+      if (filtered.length === 0) {
+        inboundMediaByRouteAndSender.delete(key);
+        continue;
+      }
+      inboundMediaByRouteAndSender.set(key, filtered);
+    }
+  }
+
+  async function resolveInboundAttachmentsForPrompt({ message, senderOpenId, routeId, chatId }) {
+    pruneInboundMediaIndexes();
+
+    const replyTargetMessageId = extractReplyTargetMessageId(message);
+    let source = "";
+    let mediaEntry = null;
+    if (replyTargetMessageId) {
+      const candidate = inboundMediaByMessageId.get(replyTargetMessageId) ?? null;
+      if (candidate && candidate.routeId === routeId) {
+        mediaEntry = candidate;
+        source = "reply_media";
+      }
+    }
+
+    if (!mediaEntry) {
+      const routeSenderKey = `${String(routeId ?? "").trim()}:${String(senderOpenId ?? "").trim()}`;
+      const entries = inboundMediaByRouteAndSender.get(routeSenderKey) ?? [];
+      mediaEntry = entries.find((entry) => entry?.messageType === "image") ?? null;
+      if (mediaEntry) {
+        source = "recent_sender_image";
+      }
+    }
+
+    if (!mediaEntry) {
+      return [];
+    }
+
+    const attachment = await resolveMediaEntryAttachment(mediaEntry);
+    if (!attachment) {
+      await sendTextMessage({
+        chatId,
+        text: "I found your recent image context but could not download it. Please resend the image and try again.",
+        replyToMessageId: String(message?.message_id ?? "").trim() || undefined
+      });
+      return [];
+    }
+
+    logInboundIngress(source, {
+      routeId,
+      chatId,
+      sourceMessageId: String(mediaEntry.messageId ?? ""),
+      sourceMessageType: String(mediaEntry.messageType ?? "")
+    });
+    return [attachment];
+  }
+
+  async function resolveMediaEntryAttachment(entry) {
+    if (!entry || typeof entry !== "object") {
+      return null;
+    }
+    if (entry.attachment && typeof entry.attachment.path === "string" && entry.attachment.path.trim()) {
+      return entry.attachment;
+    }
+
+    try {
+      const attachment =
+        entry.messageType === "file"
+          ? await downloadInboundFileAttachment(entry.message)
+          : await downloadInboundImageAttachment(entry.message);
+      if (!attachment) {
+        return null;
+      }
+      entry.attachment = attachment;
+      return attachment;
+    } catch (error) {
+      console.warn(`failed to resolve Feishu cached media ${entry.messageId ?? "(unknown)"}: ${error.message}`);
+      return null;
+    }
+  }
+
   function buildOutgoingTextEnvelope(text) {
     const normalizedText = String(text ?? "").trim();
     if (!normalizedText) {
@@ -1694,7 +1848,7 @@ function looksLikeAttachmentRequest(text) {
   return normalized.includes("/") || normalized.includes("文件") || normalized.includes("图片") || normalized.includes("image");
 }
 
-function resolveIncomingHandlingDecision(message, text, requireMentionInGroup) {
+function resolveIncomingHandlingDecision(message, text, requireMentionInGroup, options = {}) {
   const normalized = String(text ?? "").trim();
   if (normalized && /^[!/]/.test(normalized)) {
     return { allowed: true, reason: "command_like_text" };
@@ -1706,6 +1860,9 @@ function resolveIncomingHandlingDecision(message, text, requireMentionInGroup) {
   if (!requireMentionInGroup) {
     return { allowed: true, reason: "group_mentions_not_required" };
   }
+  if (options.allowGroupReplyWithoutMention && extractReplyTargetMessageId(message)) {
+    return { allowed: true, reason: "group_reply_without_required_mention" };
+  }
   if (Array.isArray(message?.mentions) && message.mentions.length > 0) {
     return { allowed: true, reason: "group_with_mention" };
   }
@@ -1713,6 +1870,28 @@ function resolveIncomingHandlingDecision(message, text, requireMentionInGroup) {
     allowed: false,
     reason: "group_plain_text_without_required_mention"
   };
+}
+
+function extractReplyTargetMessageId(message) {
+  const directCandidates = [
+    message?.parent_id,
+    message?.reply_to_message_id,
+    message?.reply_message_id,
+    message?.root_id
+  ];
+  for (const candidate of directCandidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  const parsed = parseFeishuMessageContent(message?.content);
+  if (!parsed) {
+    return "";
+  }
+  return (
+    findFirstString(parsed, ["parent_id", "reply_to_message_id", "reply_message_id", "root_id"]) || ""
+  );
 }
 
 function resolveNumberedOptionText(text, selection) {

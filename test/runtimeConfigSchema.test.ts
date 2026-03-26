@@ -49,6 +49,8 @@ describe("runtime config schema", () => {
       attachmentIssueLimitPerTurn: 0,
       heartbeatIntervalMs: 45000,
       feishuStreamMinChars: 120,
+      feishuEventDedupeTtlMs: 24 * 60 * 60 * 1000,
+      feishuRecentImageWindowMs: 3 * 60 * 1000,
       backendHttpPort: 9999,
       feishuPort: 7777
     });
@@ -75,6 +77,8 @@ describe("runtime config schema", () => {
       attachmentIssueLimitPerTurn: 1,
       heartbeatIntervalMs: 30_000,
       feishuStreamMinChars: 80,
+      feishuEventDedupeTtlMs: 24 * 60 * 60 * 1000,
+      feishuRecentImageWindowMs: 3 * 60 * 1000,
       backendHttpPort: 8788,
       feishuPort: 8788
     });
