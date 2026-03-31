@@ -280,6 +280,9 @@ export function createTurnRecoveryStore(deps) {
     let missingThread = 0;
     let skipped = 0;
 
+    // UUID regex for Claude session IDs
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
     for (const turn of turns) {
       let recoveryStatus = "recovery_unknown";
 
@@ -293,6 +296,19 @@ export function createTurnRecoveryStore(deps) {
           } catch (removeError) {
             console.error(`Failed to remove turn ${turn.threadId}: ${removeError.message}`);
           }
+          continue;
+        }
+
+        // Claude sessions (UUID format) cannot be resumed via thread/list
+        // Just clean up without showing error
+        if (uuidRegex.test(turn.threadId)) {
+          console.log(`[recovery] Claude session ${turn.threadId} cannot be resumed, cleaning up`);
+          try {
+            await removeTurn(turn.threadId, { status: "recovery_claude_session" });
+          } catch (removeError) {
+            console.error(`Failed to remove Claude turn ${turn.threadId}: ${removeError.message}`);
+          }
+          skipped += 1;
           continue;
         }
 

@@ -22,6 +22,7 @@ export async function buildBridgeRuntimes(deps) {
     fetchChannelByRouteId,
     processStartedAt,
     codex,
+    agentClientRegistry,
     config,
     state,
     activeTurns,
@@ -135,10 +136,25 @@ export async function buildBridgeRuntimes(deps) {
     debugLog,
     turnRecoveryStore,
     sendChunkedToChannel,
+    onSessionIdUpdate: async (oldSessionId, newSessionId) => {
+      // Update state binding when Claude SDK provides a real session ID
+      console.log(`[buildRuntimes] onSessionIdUpdate: ${oldSessionId} -> ${newSessionId}`);
+      const repoChannelId = state.findConversationChannelIdByAgentThreadId(oldSessionId);
+      if (repoChannelId) {
+        const binding = state.getBinding(repoChannelId);
+        if (binding) {
+          binding.codexThreadId = newSessionId;
+          state.setBinding(repoChannelId, binding);
+          await state.save();
+          console.log(`[buildRuntimes] Updated binding for ${repoChannelId}: ${oldSessionId} -> ${newSessionId}`);
+        }
+      }
+    }
   });
 
   const serverRequestRuntime = buildApprovalRuntime({
     codex,
+    agentClientRegistry,
     state,
     activeTurns,
     pendingApprovals,

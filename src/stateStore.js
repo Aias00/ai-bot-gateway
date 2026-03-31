@@ -73,13 +73,26 @@ export class StateStore {
     this.#state.threadBindings = {};
   }
 
-  findConversationChannelIdByCodexThreadId(codexThreadId) {
+  /**
+   * Find a thread binding by the agent thread/session ID.
+   * Works for both Codex thread IDs and Claude session IDs.
+   * @param {string} agentThreadId - The Codex thread ID or Claude session ID
+   * @returns {string|null} The discord thread channel ID or null
+   */
+  findConversationChannelIdByAgentThreadId(agentThreadId) {
     for (const [discordThreadChannelId, binding] of Object.entries(this.#state.threadBindings)) {
-      if (binding?.codexThreadId === codexThreadId) {
+      if (binding?.codexThreadId === agentThreadId) {
         return discordThreadChannelId;
       }
     }
     return null;
+  }
+
+  /**
+   * @deprecated Use findConversationChannelIdByAgentThreadId instead
+   */
+  findConversationChannelIdByCodexThreadId(codexThreadId) {
+    return this.findConversationChannelIdByAgentThreadId(codexThreadId);
   }
 
   countBindingsForRepoChannel(repoChannelId) {

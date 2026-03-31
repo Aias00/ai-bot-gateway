@@ -1,5 +1,6 @@
 export async function startBridgeRuntime({
   codex,
+  agentClientRegistry,
   fs,
   generalChannelCwd,
   platformRegistry,
@@ -19,7 +20,15 @@ export async function startBridgeRuntime({
   if (typeof startBackendRuntime === "function") {
     await startBackendRuntime();
   }
-  await codex.start();
+
+  // Start all clients in the registry (codex and/or claude)
+  if (agentClientRegistry && typeof agentClientRegistry.startAll === "function") {
+    await agentClientRegistry.startAll();
+  } else if (codex && typeof codex.start === "function") {
+    // Fallback: start legacy codex client directly if no registry
+    await codex.start();
+  }
+
   await fs.mkdir(generalChannelCwd, { recursive: true }).catch((error) => {
     console.warn(`failed to ensure general cwd at ${generalChannelCwd}: ${error.message}`);
   });

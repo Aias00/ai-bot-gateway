@@ -18,12 +18,12 @@
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>/Volumes/data/agent-bot-gateway/data/logs/launchd.stderr.log</string>
+	<string>data/logs/launchd.stderr.log</string>
 	<key>StandardOutPath</key>
-	<string>/Volumes/data/agent-bot-gateway/data/logs/launchd.stdout.log</string>
+	<string>data/logs/launchd.stdout.log</string>
 	<key>ThrottleInterval</key>
 	<integer>15</integer>
 	<key>WorkingDirectory</key>
-	<string>/Volumes/data/agent-bot-gateway</string>
+	<string>/Users/aias/Work/github/agent-bot-gateway</string>
 </dict>
 </plist>

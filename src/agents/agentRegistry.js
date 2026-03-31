@@ -26,6 +26,14 @@ export function createAgentRegistry(agents, defaultAgentId = null) {
     return { ...(getAgent(agentId)?.capabilities ?? {}) };
   }
 
+  function getRuntime(agentId, fallback = "codex") {
+    const agent = getAgent(agentId);
+    if (agent?.runtime === "claude" || agent?.runtime === "codex") {
+      return agent.runtime;
+    }
+    return fallback;
+  }
+
   function agentSupports(agentId, capabilityName) {
     return getCapabilities(agentId)[String(capabilityName ?? "").trim()] === true;
   }
@@ -53,6 +61,7 @@ export function createAgentRegistry(agents, defaultAgentId = null) {
     listEnabledAgents,
     getAgent,
     getCapabilities,
+    getRuntime,
     agentSupports,
     anyAgentSupports,
     getDefaultAgentId

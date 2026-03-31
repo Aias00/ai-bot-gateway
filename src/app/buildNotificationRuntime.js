@@ -21,7 +21,8 @@ export function buildNotificationRuntime(deps) {
     feishuMaxMessageLength = 8000,
     disableStreamingOutput = false,
     feishuSegmentedStreaming = false,
-    feishuStreamMinChars = 80
+    feishuStreamMinChars = 80,
+    onSessionIdUpdate = async () => {}
   } = deps;
 
   return createNotificationRuntime({
@@ -56,6 +57,7 @@ export function buildNotificationRuntime(deps) {
         status: tracker?.failed ? "failed" : "done",
         errorMessage: tracker?.failed ? tracker?.failureMessage ?? null : null
       });
-    }
+    },
+    onSessionIdUpdate
   });
 }

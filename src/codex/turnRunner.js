@@ -1,12 +1,13 @@
 import path from "node:path";
 import { TURN_PHASE } from "../turns/lifecycle.js";
+import { resolveRuntimeForAgent } from "../agents/setupResolution.js";
 
 export function createTurnRunner(deps) {
   const {
     queues,
     activeTurns,
     state,
-    codex,
+    agentClientRegistry,
     config,
     safeReply,
     buildSandboxPolicyForTurn,
@@ -17,6 +18,32 @@ export function createTurnRunner(deps) {
     onTurnCreated,
     onTurnAborted
   } = deps;
+
+  /**
+   * Get the agent client and runtime for a given setup and binding.
+   * Priority: binding.runtime > agent runtime > global runtime
+   */
+  function getClientForSetupWithRuntime(setup, existingBinding = null) {
+    // If we have an existing binding with runtime, use that
+    if (existingBinding?.runtime) {
+      return {
+        client: agentClientRegistry.getClient(existingBinding.runtime),
+        runtime: existingBinding.runtime
+      };
+    }
+
+    // Otherwise, resolve from agent configuration
+    const agentId = setup?.resolvedAgentId || setup?.agentId || null;
+    const runtime = resolveRuntimeForAgent(agentId, config);
+    return {
+      client: agentClientRegistry.getClient(runtime),
+      runtime
+    };
+  }
+
+  function getClientForSetup(setup, existingBinding = null) {
+    return getClientForSetupWithRuntime(setup, existingBinding).client;
+  }
 
   function enqueuePrompt(repoChannelId, job) {
     const queue = getQueue(repoChannelId);
@@ -73,7 +100,15 @@ export function createTurnRunner(deps) {
           throw new Error("Cannot send response in this channel (channel unavailable).");
         }
 
-        const model = job.setup.resolvedModel ?? job.setup.model ?? config.defaultModel;
+        // Get the agent client for this setup
+        const existingBinding = state.getBinding(repoChannelId);
+        const { client, runtime } = getClientForSetupWithRuntime(job.setup, existingBinding);
+
+        const rawModel = job.setup.resolvedModel ?? job.setup.model ?? config.defaultModel;
+        // For Claude runtime, don't pass model if it's the codex default (Claude CLI should use its own default)
+        const isClaudeRuntime = runtime === "claude";
+        const isCodexDefaultModel = rawModel === "gpt-5.3-codex" || rawModel === "codex-default";
+        const model = isClaudeRuntime && isCodexDefaultModel ? null : rawModel;
         const effort = config.defaultEffort;
         const approvalPolicy = config.approvalPolicy;
         const sandboxMode = job.setup.sandboxMode ?? config.sandboxMode;
@@ -85,7 +120,8 @@ export function createTurnRunner(deps) {
             allowFileWrites: job.setup.allowFileWrites !== false,
             requestId: job.requestId,
             sourceMessageId: job?.message?.id ?? null,
-            platform: job.platform
+            platform: job.platform,
+            runtime: runtime
           });
           turnPromise = turn.promise;
 
@@ -106,7 +142,7 @@ export function createTurnRunner(deps) {
             turnParams.sandboxPolicy = sandboxPolicy;
           }
 
-          await requestCodexWithReconnectRetry(() => codex.request("turn/start", turnParams));
+          await requestCodexWithReconnectRetry(() => client.request("turn/start", turnParams));
           if (!turnMaxDurationMs) {
             await turn.promise;
             return;
@@ -236,8 +272,22 @@ export function createTurnRunner(deps) {
       await state.save();
       existingThreadId = null;
     }
+
+    // If existingThreadId is a temp ID (from a previous incomplete Claude session),
+    // clear it and start fresh - temp IDs cannot be resumed
+    if (existingThreadId && existingThreadId.startsWith("temp-")) {
+      console.log(`[turnRunner] Clearing temp thread ID ${existingThreadId}, cannot resume`);
+      state.clearBinding(repoChannelId);
+      await state.save();
+      existingThreadId = null;
+    }
+
     const approvalPolicy = config.approvalPolicy;
     const sandboxMode = setup.sandboxMode ?? config.sandboxMode;
+
+    // Get the agent client for this setup
+    const client = getClientForSetup(setup, existingBinding);
+
     if (existingThreadId) {
       try {
         const resumeParams = {
@@ -250,7 +300,7 @@ export function createTurnRunner(deps) {
         if (sandboxMode) {
           resumeParams.sandbox = sandboxMode;
         }
-        await requestCodexWithReconnectRetry(() => codex.request("thread/resume", resumeParams));
+        await requestCodexWithReconnectRetry(() => client.request("thread/resume", resumeParams));
         return existingThreadId;
       } catch (error) {
         if (!isThreadNotFoundError(error)) {
@@ -262,10 +312,16 @@ export function createTurnRunner(deps) {
     }
 
     const startParams = { cwd: setup.cwd };
-    const model = setup.resolvedModel ?? setup.model ?? config.defaultModel;
+    // Resolve runtime for model filtering
+    const agentId = setup?.resolvedAgentId || setup?.agentId || null;
+    const runtimeForStart = resolveRuntimeForAgent(agentId, config);
+    const rawModelForStart = setup.resolvedModel ?? setup.model ?? config.defaultModel;
+    const isClaudeRuntimeForStart = runtimeForStart === "claude";
+    const isCodexDefaultModelForStart = rawModelForStart === "gpt-5.3-codex" || rawModelForStart === "codex-default";
+    const modelForStart = isClaudeRuntimeForStart && isCodexDefaultModelForStart ? null : rawModelForStart;
     const effort = config.defaultEffort;
-    if (model) {
-      startParams.model = model;
+    if (modelForStart) {
+      startParams.model = modelForStart;
     }
     if (effort) {
       startParams.effort = effort;
@@ -277,25 +333,52 @@ export function createTurnRunner(deps) {
       startParams.sandbox = sandboxMode;
     }
 
-    const result = await requestCodexWithReconnectRetry(() => codex.request("thread/start", startParams));
+    const result = await requestCodexWithReconnectRetry(() => client.request("thread/start", startParams));
     const threadId = result?.thread?.id;
+    // For Claude runtime, threadId may be null for new sessions
+    // The real session ID will come from system_init notification
     if (!threadId) {
-      throw new Error("thread/start did not return thread id");
+      // Generate a temporary ID for tracking - will be updated when session starts
+      const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+      console.log(`[turnRunner] thread/start returned null, using temp ID: ${tempId}`);
+
+      // Save binding with temp ID so onSessionIdUpdate can find and update it
+      const runtimeForBinding = runtimeForStart;
+      state.setBinding(repoChannelId, {
+        codexThreadId: tempId,
+        repoChannelId,
+        cwd: setup.cwd,
+        runtime: runtimeForBinding,
+        agentId: agentId || undefined
+      });
+      await state.save();
+
+      return tempId;
     }
+
+    // Determine the runtime for this binding (reuse agentId from earlier in function)
+    const runtimeForBinding = runtimeForStart;
 
     state.setBinding(repoChannelId, {
       codexThreadId: threadId,
       repoChannelId,
-      cwd: setup.cwd
+      cwd: setup.cwd,
+      runtime: runtimeForBinding,
+      agentId: agentId || undefined
     });
     await state.save();
     return threadId;
   }
 
-  function createActiveTurn(threadId, repoChannelId, message, cwd, options = {}) {
+  // Output buffer configuration
+const OUTPUT_BUFFER_MAX_LINES = 500;
+
+function createActiveTurn(threadId, repoChannelId, message, cwd, options = {}) {
     if (activeTurns.has(threadId)) {
       throw new Error("Turn already active for this thread");
     }
+
+    console.log(`[turnRunner] createActiveTurn: threadId=${threadId}, repoChannelId=${repoChannelId}, platform=${options.platform}`);
 
     let resolveTurn;
     let rejectTurn;
@@ -317,6 +400,7 @@ export function createTurnRunner(deps) {
       requestId: typeof options.requestId === "string" && options.requestId ? options.requestId : null,
       sourceMessageId: typeof options.sourceMessageId === "string" && options.sourceMessageId ? options.sourceMessageId : null,
       platform: typeof options.platform === "string" && options.platform ? options.platform : null,
+      runtime: typeof options.runtime === "string" && options.runtime ? options.runtime : "codex",
       sentAttachmentKeys: new Set(),
       seenAttachmentIssueKeys: new Set(),
       attachmentIssueCount: 0,
@@ -350,6 +434,10 @@ export function createTurnRunner(deps) {
       activeLifecycleItemKeys: new Set(),
       completedLifecycleItemKeys: new Set(),
       finalizing: false,
+      // Output buffer for /screen and /log commands
+      outputBuffer: [],
+      outputBufferTimestamps: [],
+      outputBufferMaxLines: OUTPUT_BUFFER_MAX_LINES,
       resolve(value) {
         if (promiseSettled) {
           return;

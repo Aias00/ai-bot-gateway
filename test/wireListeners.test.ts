@@ -96,9 +96,9 @@ describe("wire listeners", () => {
       codexHandlers.get("serverRequest")?.({ method: "item/fileChange/requestApproval" });
       await new Promise((resolve) => setTimeout(resolve, 10));
 
-      expect(errorLog.some((line) => line.includes("notification handler failed for turn/completed: notification boom"))).toBe(true);
+      expect(errorLog.some((line) => line.includes("codex notification handler for turn/completed: notification boom"))).toBe(true);
       expect(
-        errorLog.some((line) => line.includes("serverRequest handler failed for item/fileChange/requestApproval: server request boom"))
+        errorLog.some((line) => line.includes("codex serverRequest handler for item/fileChange/requestApproval: server request boom"))
       ).toBe(true);
     } finally {
       console.error = originalConsoleError;

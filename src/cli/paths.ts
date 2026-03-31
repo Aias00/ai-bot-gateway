@@ -152,11 +152,21 @@ function resolveRuntimeRoot(cwd: string): string {
 }
 
 function resolveCliRuntimeRoot(cwd: string): string {
+  // Check for explicit environment variable override FIRST
+  // This ensures tests can override path resolution without interference from managed runtime detection
+  const configured = String(process.env.DISCORD_BRIDGE_ROOT ?? "").trim();
+  if (configured) {
+    return path.resolve(configured);
+  }
+
+  // Then check for managed runtime (production deployment scenario)
   const service = resolveLaunchdServiceInfo(cwd);
   if (fs.existsSync(service.installedPlistPath) && fs.existsSync(service.managedWrapperPath) && fs.existsSync(service.managedRuntimeRoot)) {
     return service.managedRuntimeRoot;
   }
-  return resolveRuntimeRoot(cwd);
+
+  // Finally fall back to cwd
+  return path.resolve(cwd);
 }
 
 function readLaunchdLogPaths(cwd: string): { stdoutLogPath: string | null; stderrLogPath: string | null } {

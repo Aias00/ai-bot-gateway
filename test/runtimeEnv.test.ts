@@ -18,14 +18,29 @@ describe("runtime env", () => {
   });
 
   test("includes repo root in attachment roots", () => {
+    const previousWorkspaceRoot = process.env.WORKSPACE_ROOT;
+    const previousProjectsRoot = process.env.PROJECTS_ROOT;
     const previousRepoRoot = process.env.DISCORD_REPO_ROOT;
     const previousAttachmentRoots = process.env.DISCORD_ATTACHMENT_ROOTS;
+    // Clear higher-priority vars to isolate DISCORD_REPO_ROOT behavior
+    delete process.env.WORKSPACE_ROOT;
+    delete process.env.PROJECTS_ROOT;
     process.env.DISCORD_REPO_ROOT = "/Volumes/data/workspace";
     delete process.env.DISCORD_ATTACHMENT_ROOTS;
     try {
       const env = loadRuntimeEnv();
       expect(env.attachmentRoots).toContain("/Volumes/data/workspace");
     } finally {
+      if (previousWorkspaceRoot === undefined) {
+        delete process.env.WORKSPACE_ROOT;
+      } else {
+        process.env.WORKSPACE_ROOT = previousWorkspaceRoot;
+      }
+      if (previousProjectsRoot === undefined) {
+        delete process.env.PROJECTS_ROOT;
+      } else {
+        process.env.PROJECTS_ROOT = previousProjectsRoot;
+      }
       if (previousRepoRoot === undefined) {
         delete process.env.DISCORD_REPO_ROOT;
       } else {

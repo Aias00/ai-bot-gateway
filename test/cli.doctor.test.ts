@@ -10,7 +10,8 @@ const ENV_KEYS = [
   "FEISHU_APP_SECRET",
   "FEISHU_TRANSPORT",
   "DISCORD_ATTACHMENT_ROOTS",
-  "DISCORD_GENERAL_CWD"
+  "DISCORD_GENERAL_CWD",
+  "DISCORD_BRIDGE_ROOT"
 ] as const;
 const ORIGINAL_ENV = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
@@ -50,6 +51,7 @@ describe("cli doctor command", () => {
         "utf8"
       );
       process.env.DISCORD_BOT_TOKEN = "discord-token";
+      process.env.DISCORD_BRIDGE_ROOT = cwd;
 
       const result = await runDoctorCommand([], { cwd, now: new Date() });
       expect(result.ok).toBe(false);
@@ -90,6 +92,7 @@ describe("cli doctor command", () => {
         "utf8"
       );
       process.env.DISCORD_BOT_TOKEN = "discord-token";
+      process.env.DISCORD_BRIDGE_ROOT = cwd;
 
       const result = await runDoctorCommand([], { cwd, now: new Date() });
       expect(result.ok).toBe(true);
@@ -133,6 +136,7 @@ describe("cli doctor command", () => {
         "utf8"
       );
       process.env.DISCORD_BOT_TOKEN = "discord-token";
+      process.env.DISCORD_BRIDGE_ROOT = cwd;
 
       const result = await runDoctorCommand([], { cwd, now: new Date() });
       expect(result.ok).toBe(false);

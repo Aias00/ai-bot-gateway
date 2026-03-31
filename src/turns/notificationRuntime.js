@@ -32,21 +32,25 @@ export function createNotificationRuntime(deps) {
     splitTextForMessages = splitTextForMessagesFallback,
     turnCompletionQuietMs = 3000,
     turnCompletionMaxWaitMs = 12000,
-    reconnectSettleQuietMs = 5000
+    reconnectSettleQuietMs = 5000,
+    onSessionIdUpdate = async () => {}
   } = deps;
   const discordStreamMinChars = Math.max(80, Math.min(240, Math.floor(discordMaxMessageLength / 16)));
 
   async function handleNotification({ method, params }) {
     const normalized = normalizeCodexNotification({ method, params });
+    console.log(`[notificationRuntime] handleNotification: method=${method}, kind=${normalized?.kind}, threadId=${normalized?.threadId}`);
 
     if (normalized.kind === "agent_delta") {
       const threadId = normalized.threadId;
       const delta = normalized.delta;
       if (!threadId || !delta) {
+        console.log(`[notificationRuntime] agent_delta skipped: threadId=${threadId}, delta_len=${delta?.length}`);
         return;
       }
       const tracker = activeTurns.get(threadId);
       if (!tracker) {
+        console.log(`[notificationRuntime] No tracker for threadId=${threadId}, activeTurns keys: ${Array.from(activeTurns.keys()).join(', ')}`);
         return;
       }
       noteTurnActivity(tracker);
@@ -66,12 +70,15 @@ export function createNotificationRuntime(deps) {
     if (normalized.kind === "item_lifecycle") {
       const threadId = normalized.threadId;
       if (!threadId) {
+        console.log(`[notificationRuntime] item_lifecycle skipped: no threadId`);
         return;
       }
       const tracker = activeTurns.get(threadId);
       if (!tracker) {
+        console.log(`[notificationRuntime] NO TRACKER for item_lifecycle threadId=${threadId}, activeTurns keys: [${Array.from(activeTurns.keys()).join(', ')}]`);
         return;
       }
+      console.log(`[notificationRuntime] item_lifecycle FOUND tracker for threadId=${threadId}, state=${normalized.state}`);
       noteTurnActivity(tracker);
       const item = normalized.item;
       const state = normalized.state;
@@ -124,17 +131,25 @@ export function createNotificationRuntime(deps) {
 
     if (normalized.kind === "turn_completed") {
       const threadId = normalized.threadId;
+      console.log(`[notificationRuntime] turn_completed: threadId=${threadId}`);
       if (!threadId) {
+        console.log(`[notificationRuntime] turn_completed skipped: no threadId`);
         return;
       }
       const tracker = activeTurns.get(threadId);
       if (!tracker) {
+        console.log(`[notificationRuntime] NO TRACKER for turn_completed threadId=${threadId}, activeTurns keys: [${Array.from(activeTurns.keys()).join(', ')}]`);
         return;
       }
+      console.log(`[notificationRuntime] turn_completed FOUND tracker for threadId=${threadId}, resultText=${normalized.resultText?.slice(0, 50)}`);
       noteTurnActivity(tracker);
       tracker.turnCompletionRequested = true;
       if (!tracker.turnCompletionRequestedAt) {
         tracker.turnCompletionRequestedAt = Date.now();
+      }
+      // Store result text for final message
+      if (normalized.resultText) {
+        tracker.resultText = normalized.resultText;
       }
       scheduleTurnFinalizeWhenSettled(threadId, tracker);
       return;
@@ -167,6 +182,56 @@ export function createNotificationRuntime(deps) {
         }
         await finalizeTurn(threadId, new Error(message));
       }
+    }
+
+    if (normalized.kind === "system_init") {
+      // Session ID update from Claude SDK
+      // threadId is the original temp ID, realSessionId is the actual session from SDK
+      const { threadId, sessionId, model, realSessionId } = normalized;
+      console.log(`[notificationRuntime] system/init: threadId=${threadId}, sessionId=${sessionId}, realSessionId=${realSessionId || 'none'}, model=${model}`);
+
+      // If we have a realSessionId that differs from threadId, update the tracker
+      const effectiveSessionId = realSessionId || sessionId;
+      if (threadId && effectiveSessionId && threadId !== effectiveSessionId) {
+        // The placeholder threadId needs to be updated to the real sessionId
+        const tracker = activeTurns.get(threadId);
+        if (tracker) {
+          console.log(`[notificationRuntime] Updating tracker key from ${threadId} to ${effectiveSessionId}`);
+          // Update the tracker key
+          activeTurns.delete(threadId);
+          tracker.threadId = effectiveSessionId;
+          activeTurns.set(effectiveSessionId, tracker);
+          // Notify state store to update binding
+          await onSessionIdUpdate(threadId, effectiveSessionId);
+        } else {
+          console.log(`[notificationRuntime] No tracker found for threadId=${threadId}, available keys: ${Array.from(activeTurns.keys()).join(', ')}`);
+        }
+      }
+    }
+
+    if (normalized.kind === "tool_progress") {
+      const threadId = normalized.threadId;
+      if (!threadId) {
+        return;
+      }
+      const tracker = activeTurns.get(threadId);
+      if (!tracker) {
+        return;
+      }
+      noteTurnActivity(tracker);
+      const toolName = normalized.tool_name || "tool";
+      const elapsedSeconds = normalized.elapsed_time_seconds;
+      const elapsedStr = Number.isFinite(elapsedSeconds) ? ` (${Math.floor(elapsedSeconds)}s)` : "";
+      const toolNameShort = truncateStatusText(toolName, 40);
+      pushStatusLine(tracker, `🔧 ${toolNameShort}${elapsedStr}`);
+      await ensureWorkingStage(tracker);
+      debugLog("tool-progress", "tool progress", {
+        threadId,
+        turnId: threadId,
+        discordMessageId: tracker.statusMessageId ?? null,
+        toolName,
+        elapsedSeconds
+      });
     }
   }
 
@@ -212,13 +277,17 @@ export function createNotificationRuntime(deps) {
   }
 
   async function finalizeTurn(threadId, error) {
+    console.log(`[notificationRuntime] finalizeTurn called: threadId=${threadId}, error=${error?.message || 'none'}`);
     const tracker = activeTurns.get(threadId);
     if (!tracker) {
+      console.log(`[notificationRuntime] finalizeTurn: NO TRACKER for threadId=${threadId}, activeTurns keys: [${Array.from(activeTurns.keys()).join(', ')}]`);
       return;
     }
     if (tracker.finalizing) {
+      console.log(`[notificationRuntime] finalizeTurn: already finalizing threadId=${threadId}`);
       return;
     }
+    console.log(`[notificationRuntime] finalizeTurn: FOUND tracker for threadId=${threadId}, fullText_len=${tracker.fullText?.length || 0}`);
     if (!transitionTurnPhase(tracker, TURN_PHASE.FINALIZING)) {
       return;
     }
@@ -666,9 +735,39 @@ export function createNotificationRuntime(deps) {
     if (fromDelta) {
       tracker.seenDelta = true;
     }
+    // Append to output buffer for /screen and /log commands
+    appendOutputBuffer(tracker, text);
     if (canStreamTrackerOutput(tracker)) {
       scheduleFlush(tracker);
     }
+  }
+
+  function appendOutputBuffer(tracker, text) {
+    if (!tracker.outputBuffer) {
+      tracker.outputBuffer = [];
+      tracker.outputBufferTimestamps = [];
+      tracker.outputBufferMaxLines = 500;
+    }
+    const lines = text.split(/\r?\n/);
+    const now = Date.now();
+    for (const line of lines) {
+      if (line.trim().length === 0) continue;
+      tracker.outputBuffer.push(line);
+      tracker.outputBufferTimestamps.push(now);
+      // Ring buffer: remove oldest when over limit
+      while (tracker.outputBuffer.length > tracker.outputBufferMaxLines) {
+        tracker.outputBuffer.shift();
+        tracker.outputBufferTimestamps.shift();
+      }
+    }
+  }
+
+  function getOutputBufferSnapshot(tracker, lineCount = 60) {
+    if (!tracker?.outputBuffer || tracker.outputBuffer.length === 0) {
+      return [];
+    }
+    const start = Math.max(0, tracker.outputBuffer.length - lineCount);
+    return tracker.outputBuffer.slice(start);
   }
 
   function pushStatusLine(tracker, line) {
@@ -980,7 +1079,8 @@ export function createNotificationRuntime(deps) {
   return {
     handleNotification,
     finalizeTurn,
-    onTurnReconnectPending
+    onTurnReconnectPending,
+    getOutputBufferSnapshot
   };
 }
 

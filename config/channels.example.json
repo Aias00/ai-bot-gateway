@@ -5,6 +5,7 @@
   "defaultEffort": "medium",
   "approvalPolicy": "never",
   "sandboxMode": "workspace-write",
+  "runtime": "codex",
   "allowedUserIds": [
     "123456789012345678"
   ],
@@ -14,6 +15,7 @@
   "agents": {
     "codex-default": {
       "model": "gpt-5.3-codex",
+      "runtime": "codex",
       "enabled": true,
       "capabilities": {
         "supportsImageInput": true
@@ -21,9 +23,26 @@
     },
     "codex-lite": {
       "model": "gpt-5.3-codex",
+      "runtime": "codex",
       "enabled": true,
       "capabilities": {
         "supportsImageInput": false
+      }
+    },
+    "claude-default": {
+      "model": "claude-sonnet-4-6",
+      "runtime": "claude",
+      "enabled": true,
+      "capabilities": {
+        "supportsImageInput": true
+      }
+    },
+    "claude-unrestricted": {
+      "model": "claude-sonnet-4-6",
+      "runtime": "claude",
+      "enabled": true,
+      "capabilities": {
+        "supportsImageInput": true
       }
     }
   },
@@ -35,8 +54,7 @@
     },
     "feishu:oc_xxxxxxxxxxxxxxxxx": {
       "cwd": "/absolute/path/to/feishu/repo",
-      "model": "gpt-5.3-codex",
-      "agentId": "codex-lite"
+      "agentId": "claude-default"
     }
   }
 }

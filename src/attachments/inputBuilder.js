@@ -142,7 +142,7 @@ export function createAttachmentInputBuilder(deps) {
       }
     }
 
-    let previewStatus = "";
+    let previewStatus;
     let previewText = "";
     if (isTextPreviewCandidate(attachment, extension)) {
       try {

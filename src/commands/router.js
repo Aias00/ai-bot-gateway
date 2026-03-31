@@ -29,7 +29,8 @@ export function createCommandRouter(deps) {
     safeReply,
     getChannelSetups,
     setChannelSetups,
-    getPlatformRegistry
+    getPlatformRegistry,
+    getOutputBufferSnapshot = () => []
   } = deps;
 
   async function handleCommand(message, content, context) {
@@ -98,6 +99,46 @@ export function createCommandRouter(deps) {
           `active turn: ${activeTurn ? "yes" : "no"}`
         ].join("\n")
       );
+      return;
+    }
+
+    if (command === "!screen") {
+      const activeTurn = findActiveTurnByRepoChannel(context.repoChannelId);
+      if (!activeTurn) {
+        await safeReply(message, "No active turn in this channel.");
+        return;
+      }
+      const lines = getOutputBufferSnapshot(activeTurn, 60);
+      if (lines.length === 0) {
+        await safeReply(message, "📺 Terminal output is empty.");
+        return;
+      }
+      const display = lines.join("\n");
+      const platformId = inferPlatformId(message);
+      const maxLen = platformId === "feishu" ? 8000 : 1900;
+      const truncated = truncateForDisplay(display, maxLen);
+      await safeReply(message, `📺 Terminal output (${lines.length} lines):\n\`\`\`\n${truncated}\n\`\`\``);
+      return;
+    }
+
+    if (command === "!log") {
+      const activeTurn = findActiveTurnByRepoChannel(context.repoChannelId);
+      if (!activeTurn) {
+        await safeReply(message, "No active turn in this channel.");
+        return;
+      }
+      const n = parseInt(rest, 10) || 20;
+      const lineCount = Math.min(Math.max(1, n), 200);
+      const lines = getOutputBufferSnapshot(activeTurn, lineCount);
+      if (lines.length === 0) {
+        await safeReply(message, "📜 No recent output.");
+        return;
+      }
+      const display = lines.join("\n");
+      const platformId = inferPlatformId(message);
+      const maxLen = platformId === "feishu" ? 8000 : 1900;
+      const truncated = truncateForDisplay(display, maxLen);
+      await safeReply(message, `📜 Recent ${lines.length} lines:\n\`\`\`\n${truncated}\n\`\`\``);
       return;
     }
 
@@ -298,7 +339,8 @@ export function createCommandRouter(deps) {
           message,
           [
             "No agents configured in `channels.json` (`defaultAgent` / `agents`).",
-            `Current model: \`${context.setup.resolvedModel ?? context.setup.model ?? config.defaultModel}\``
+            `Current model: \`${context.setup.resolvedModel ?? context.setup.model ?? config.defaultModel}\``,
+            `Global runtime: \`${config.runtime || "codex"}\``
           ].join("\n")
         );
         return;
@@ -307,26 +349,36 @@ export function createCommandRouter(deps) {
       const lines = [
         `default agent: ${config.defaultAgent ? `\`${config.defaultAgent}\`` : "(none)"}`,
         `current agent: ${currentAgentId ? `\`${currentAgentId}\`` : "(none)"}`,
+        `global runtime: \`${config.runtime || "codex"}\``,
         "available agents:"
       ];
       for (const agentId of agentIds) {
         const agent = configuredAgents[agentId] ?? {};
         const model = typeof agent.model === "string" && agent.model.trim().length > 0 ? agent.model.trim() : "(inherits defaultModel)";
         const enabled = agent.enabled === false ? "disabled" : "enabled";
+        const runtime = agent.runtime === "claude" || agent.runtime === "codex" ? agent.runtime : "(inherits global)";
         const supportsImageInput = formatImageCapabilityLabel(agent);
         const marker = currentAgentId === agentId ? " <- current" : config.defaultAgent === agentId ? " <- default" : "";
-        lines.push(`- \`${agentId}\` | ${enabled} | ${supportsImageInput} | model: \`${model}\`${marker}`);
+        lines.push(`- \`${agentId}\` | ${enabled} | ${supportsImageInput} | model: \`${model}\` | runtime: \`${runtime}\`${marker}`);
       }
       await safeReply(message, lines.join("\n"));
       return;
     }
 
-    if (command === "!approve" || command === "!decline" || command === "!cancel") {
+    if (command === "!approve" || command === "!decline" || command === "!cancel" || command === "!y" || command === "!n") {
       let token = rest;
+      // !y and !n are aliases for approve/decline with latest token
+      const isQuickApprove = command === "!y";
+      const isQuickDecline = command === "!n";
+      const effectiveCommand = isQuickApprove ? "!approve" : isQuickDecline ? "!decline" : command;
+
       if (!token) {
         token = findLatestPendingApprovalTokenForChannel(message.channelId);
         if (!token) {
-          await safeReply(message, `No pending approvals in this channel. Usage: \`${command} <id>\``);
+          const actionHint = isQuickApprove || isQuickDecline
+            ? `No pending approvals. Use \`!approve <id>\` or \`!decline <id>\` when an approval is pending.`
+            : `No pending approvals in this channel. Usage: \`${command} <id>\``;
+          await safeReply(message, actionHint);
           return;
         }
       }
@@ -339,7 +391,7 @@ export function createCommandRouter(deps) {
         await safeReply(message, "That approval belongs to a different channel.");
         return;
       }
-      const decision = command === "!approve" ? "accept" : command === "!cancel" ? "cancel" : "decline";
+      const decision = effectiveCommand === "!approve" ? "accept" : effectiveCommand === "!cancel" ? "cancel" : "decline";
       const result = await applyApprovalDecision(token, decision, `<@${message.author.id}>`);
       if (!result.ok) {
         await safeReply(message, `Failed to send approval response: ${result.error}`);
@@ -417,6 +469,8 @@ export function createCommandRouter(deps) {
     lines.push(`\`${prefix}agents\` show configured agents and current selection`);
     lines.push(`\`${prefix}ask <prompt>\` send prompt in this repo channel`);
     lines.push(`\`${prefix}status\` show queue/thread status for this channel`);
+    lines.push(`\`${prefix}screen\` show recent terminal output (last 60 lines)`);
+    lines.push(`\`${prefix}log [n]\` show last n lines of output (default 20, max 200)`);
     lines.push(`\`${prefix}new\` reset Codex thread binding for this channel`);
     lines.push(`\`${prefix}restart [reason]\` request host-managed restart and confirm when back`);
     lines.push(`\`${prefix}interrupt\` interrupt current turn in this channel`);
@@ -424,6 +478,8 @@ export function createCommandRouter(deps) {
     lines.push(`\`${prefix}approve [id]\` approve the latest (or specified) pending request`);
     lines.push(`\`${prefix}decline [id]\` decline the latest (or specified) pending request`);
     lines.push(`\`${prefix}cancel [id]\` cancel the latest (or specified) pending request`);
+    lines.push(`\`${prefix}y\` approve the latest pending request (quick alias)`);
+    lines.push(`\`${prefix}n\` decline the latest pending request (quick alias)`);
     if (supportsAutoDiscovery) {
       lines.push(`\`${prefix}resync\` non-destructive sync with managed project routes`);
       lines.push(`\`${prefix}rebuild\` destructive rebuild of managed project routes`);
@@ -470,6 +526,14 @@ export function createCommandRouter(deps) {
 
   function inferPlatformId(message) {
     return String(message?.platform ?? "discord").trim().toLowerCase() || "discord";
+  }
+
+  function truncateForDisplay(text, maxLen) {
+    if (text.length <= maxLen) {
+      return text;
+    }
+    const suffix = "\n...[truncated]";
+    return text.slice(0, maxLen - suffix.length) + suffix;
   }
 
   async function handleInitRepoCommand(message, rest) {

@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { EventEmitter } from "node:events";
-import { CodexRpcClient } from "../codexRpcClient.js";
+import { createAgentClientRegistry } from "../clients/agentClientRegistry.js";
 import {
   maybeSendAttachmentsForItem as maybeSendAttachmentsForItemFromService,
   maybeSendInferredAttachmentsFromText as maybeSendInferredAttachmentsFromTextFromService
@@ -23,6 +23,7 @@ export async function buildRuntimeGraph(deps) {
   const { runtimeEnv, discordToken, execFileAsync, debugLog, discordMaxMessageLength, feishuMaxMessageLength, config, state } = deps;
   const {
     codexBin,
+    claudeBin,
     imageCacheDir,
     maxImagesPerMessage,
     attachmentMaxBytes,
@@ -39,8 +40,9 @@ export async function buildRuntimeGraph(deps) {
   } = runtimeEnv;
 
   const discord = discordToken ? await createDiscordClient() : createDisabledDiscordClient();
-  const codex = new CodexRpcClient({
-    codexBin
+  const agentClientRegistry = createAgentClientRegistry({
+    codexBin,
+    claudeBin
   });
   const runtimeContainer = createRuntimeContainer();
   const fetchChannelByRouteId = async (routeId) => {
@@ -120,7 +122,7 @@ export async function buildRuntimeGraph(deps) {
     queues,
     activeTurns,
     state,
-    codex,
+    agentClientRegistry,
     config,
     safeReply,
     buildSandboxPolicyForTurn,
@@ -139,12 +141,14 @@ export async function buildRuntimeGraph(deps) {
       onActiveTurnsChanged: () => runtimeContainer.getRef("runtimeOps")?.writeHeartbeatFile()
     })
   );
+  runtimeContainer.setRef("agentClientRegistry", agentClientRegistry);
 
   return {
     fs,
     path,
     discord,
-    codex,
+    codex: agentClientRegistry.getClient("codex"), // Backward compatibility
+    agentClientRegistry,
     safeReply,
     safeSendToChannel,
     safeAddReaction,

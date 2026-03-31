@@ -30,7 +30,8 @@
       {
         "kind": "turn_completed",
         "method": "turn/completed",
-        "threadId": "thread-1"
+        "threadId": "thread-1",
+        "sessionId": null
       }
     ],
     "renderPlanUser": {

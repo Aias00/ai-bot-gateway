@@ -60,6 +60,7 @@ export async function loadConfig(filePath, options = {}) {
     normalizedAgents[agentId] = {
       ...(typeof value.model === "string" ? { model: value.model.trim() } : {}),
       ...(typeof value.enabled === "boolean" ? { enabled: value.enabled } : {}),
+      ...(value.runtime === "claude" || value.runtime === "codex" ? { runtime: value.runtime } : {}),
       ...(capabilities ? { capabilities } : {}),
       ...(value.meta && typeof value.meta === "object" && !Array.isArray(value.meta) ? { meta: value.meta } : {})
     };
@@ -112,7 +113,7 @@ export async function loadConfig(filePath, options = {}) {
   const parsedApprovalPolicy = normalizeApprovalPolicy(rawApprovalPolicy);
   if (rawApprovalPolicy !== undefined && rawApprovalPolicy !== null && parsedApprovalPolicy === null) {
     throw new Error(
-      `Invalid approval policy '${rawApprovalPolicy}'. Use one of: untrusted, on-failure, on-request, never.`
+      `Invalid approval policy '${rawApprovalPolicy}'. Use one of: untrusted, on-failure, on-request, never, bypass, skip-all.`
     );
   }
   const approvalPolicy = parsedApprovalPolicy ?? "never";
@@ -127,6 +128,16 @@ export async function loadConfig(filePath, options = {}) {
   }
   const sandboxMode = parsedSandboxMode ?? "workspace-write";
 
+  const envRuntime = process.env.AGENT_RUNTIME;
+  const rawRuntime = typeof envRuntime === "string" ? envRuntime : parsed.runtime;
+  const parsedRuntime = normalizeRuntime(rawRuntime);
+  if (rawRuntime !== undefined && rawRuntime !== null && parsedRuntime === null) {
+    throw new Error(
+      `Invalid runtime '${rawRuntime}'. Use one of: codex, claude.`
+    );
+  }
+  const runtime = parsedRuntime ?? "codex";
+
   return {
     channels: normalizedChannels,
     defaultAgent: defaultAgent || null,
@@ -138,6 +149,7 @@ export async function loadConfig(filePath, options = {}) {
     defaultEffort: normalizeEffort(parsed.defaultEffort) ?? defaultEffort,
     approvalPolicy,
     sandboxMode,
+    runtime,
     allowedUserIds,
     allowedFeishuUserIds,
     autoDiscoverProjects: parsed.autoDiscoverProjects !== false
@@ -158,7 +170,8 @@ function normalizeApprovalPolicy(value) {
     return null;
   }
   const normalized = value.trim();
-  const allowed = new Set(["untrusted", "on-failure", "on-request", "never"]);
+  // "bypass" and "skip-all" map to --dangerously-skip-permissions (bypassPermissions mode)
+  const allowed = new Set(["untrusted", "on-failure", "on-request", "never", "bypass", "skip-all"]);
   return allowed.has(normalized) ? normalized : null;
 }
 
@@ -168,6 +181,15 @@ function normalizeSandboxMode(value) {
   }
   const normalized = value.trim();
   const allowed = new Set(["read-only", "workspace-write", "danger-full-access"]);
+  return allowed.has(normalized) ? normalized : null;
+}
+
+function normalizeRuntime(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim().toLowerCase();
+  const allowed = new Set(["codex", "claude"]);
   return allowed.has(normalized) ? normalized : null;
 }
 

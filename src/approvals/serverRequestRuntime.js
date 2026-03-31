@@ -1,6 +1,7 @@
 export function createServerRequestRuntime(deps) {
   const {
     codex,
+    agentClientRegistry,
     discord,
     state,
     activeTurns,
@@ -103,6 +104,11 @@ export function createServerRequestRuntime(deps) {
 
     const existingToken = findPendingApprovalTokenByRequestId(id);
     const token = existingToken ?? createApprovalToken();
+
+    // Get runtime from the active turn tracker
+    const tracker = threadId ? activeTurns.get(threadId) : null;
+    const runtime = tracker?.runtime || "codex";
+
     if (!existingToken) {
       pendingApprovals.set(token, {
         requestId: id,
@@ -110,7 +116,8 @@ export function createServerRequestRuntime(deps) {
         repoChannelId,
         threadId,
         params,
-        approvalMessageId: null
+        approvalMessageId: null,
+        runtime
       });
     }
 
@@ -183,9 +190,21 @@ export function createServerRequestRuntime(deps) {
     try {
       const response = buildResponseForServerRequest(approval.method, approval.params, decision);
       console.log(
-        `[approval:decision] method=${approval.method} token=${token} requestId=${String(approval.requestId)} requestIdType=${typeof approval.requestId} decision=${decision}`
+        `[approval:decision] method=${approval.method} token=${token} requestId=${String(approval.requestId)} requestIdType=${typeof approval.requestId} decision=${decision} runtime=${approval.runtime || "codex"}`
       );
-      codex.respond(approval.requestId, response);
+
+      // Use the correct client based on runtime
+      const runtime = approval.runtime || "codex";
+      const client = agentClientRegistry && typeof agentClientRegistry.getClient === "function"
+        ? agentClientRegistry.getClient(runtime)
+        : codex;
+
+      if (!client) {
+        console.error(`[approval:decision] No client found for runtime=${runtime}`);
+        return { ok: false, error: `No client for runtime ${runtime}` };
+      }
+
+      client.respond(approval.requestId, response);
     } catch (error) {
       return { ok: false, error: error.message };
     }

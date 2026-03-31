@@ -9,8 +9,53 @@ function runDetached(label, action) {
     });
 }
 
+/**
+ * Wire event listeners to an agent client.
+ * @param {string} runtime - The runtime name (claude, codex)
+ * @param {object} client - The client instance
+ * @param {function} handleNotification - Notification handler
+ * @param {function} handleServerRequest - Server request handler
+ */
+function wireClientListeners(runtime, client, handleNotification, handleServerRequest) {
+  console.log(`[wireListeners] Wiring listeners for ${runtime} client`);
+
+  client.on("notification", (event) => {
+    console.log(`[wireListeners] ${runtime} notification: method=${event?.method}, threadId=${event?.params?.threadId}`);
+    runDetached(`${runtime} notification handler for ${event?.method ?? "unknown"}`, () => handleNotification(event));
+  });
+
+  client.on("serverRequest", (request) => {
+    console.log(`[wireListeners] ${runtime} serverRequest: method=${request?.method}`);
+    runDetached(`${runtime} serverRequest handler for ${request?.method ?? "unknown"}`, () => handleServerRequest(request));
+  });
+
+  client.on("error", (error) => {
+    console.error(`[${runtime}] client error: ${error.message}`);
+  });
+
+  client.on("exit", ({ code, signal }) => {
+    console.error(`[${runtime}] client exited (code=${code}, signal=${signal ?? "none"})`);
+  });
+
+  client.on("stderr", (data) => {
+    const line = typeof data === "string" ? data.trim() : String(data);
+    if (!line) {
+      return;
+    }
+    if (isMissingRolloutPathError(line)) {
+      console.warn(`[wireListeners] Ignoring missing rollout path error: ${line.slice(0, 100)}`);
+      return;
+    }
+    if (isBenignCodexStderrLine(line)) {
+      return;
+    }
+    console.error(`[${runtime}] ${line}`);
+  });
+}
+
 export function wireBridgeListeners({
   codex,
+  agentClientRegistry,
   discord,
   handleNotification,
   handleServerRequest,
@@ -18,29 +63,19 @@ export function wireBridgeListeners({
   handleMessage,
   handleInteraction
 }) {
-  codex.on("stderr", (line) => {
-    if (isBenignCodexStderrLine(line)) {
-      return;
-    }
-    if (isMissingRolloutPathError(line)) {
-      // 缺失 rollout path 不是致命错误，只记录警告
-      console.warn(`[codex] Ignoring missing rollout path error: ${line}`);
-      return;
-    }
-    console.error(`[codex] ${line}`);
-  });
-  codex.on("notification", (event) => {
-    runDetached(`notification handler failed for ${event?.method ?? "unknown"}`, () => handleNotification(event));
-  });
-  codex.on("serverRequest", (request) => {
-    runDetached(`serverRequest handler failed for ${request?.method ?? "unknown"}`, () => handleServerRequest(request));
-  });
-  codex.on("exit", ({ code, signal }) => {
-    console.error(`codex app-server exited (code=${code}, signal=${signal ?? "none"})`);
-  });
-  codex.on("error", (error) => {
-    console.error(`codex app-server error: ${error.message}`);
-  });
+  // Wire listeners for legacy codex client (if provided - for backward compatibility)
+  if (codex) {
+    wireClientListeners("codex", codex, handleNotification, handleServerRequest);
+  }
+
+  // Pre-create and wire the claude client from the registry
+  // This ensures the client exists and has listeners before any turn is started
+  if (agentClientRegistry && typeof agentClientRegistry.getClient === "function") {
+    console.log(`[wireListeners] Pre-creating claude client from registry`);
+    const claudeClient = agentClientRegistry.getClient("claude");
+    wireClientListeners("claude", claudeClient, handleNotification, handleServerRequest);
+    console.log(`[wireListeners] Claude client wired, clients in registry: [${Array.from(agentClientRegistry.getAllClients().keys()).join(', ')}]`);
+  }
 
   discord.on("clientReady", () => {
     console.log(`Discord connected as ${discord.user?.tag}`);

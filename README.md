@@ -154,9 +154,33 @@ sequenceDiagram
 ### Agent Model
 
 - Agent definitions are loaded from `channels.json > agents`.
-- Each route resolves `agentId + model` in this order: route override -> `defaultAgent` -> runtime fallback.
+- Each agent can specify `runtime: "codex"` or `runtime: "claude"` to choose the backend.
+- Each route resolves `agentId + model + runtime` in this order: route override -> `defaultAgent` -> runtime fallback.
+- Runtime priority for route resolution:
+  1. Persisted binding runtime (from previous turn, stored in `data/state.json`)
+  2. Agent runtime (from `agents[id].runtime` in config)
+  3. Global runtime (from `runtime` field or `AGENT_RUNTIME` env var)
 - Agent capabilities are checked through a shared registry instead of per-platform hardcoding.
 - Current capability in active use: `supportsImageInput`.
+
+### Runtime Model (Codex vs Claude)
+
+The gateway supports two agent runtimes:
+
+| Feature | Codex Runtime | Claude Runtime |
+| --- | --- | --- |
+| Backend | `codex app-server` JSON-RPC | `claude` CLI SDK |
+| Session model | Thread ID from `thread/start` | Session ID from `system/init` |
+| Model filtering | Pass all models | Filter codex default models |
+| Approval UI | Discord buttons / text commands | Text commands only |
+| Session resume | `thread/resume` with thread ID | `--resume` with session UUID |
+| Streaming | Status message edits | Segmented text messages |
+
+For Claude agents:
+- Configure `runtime: "claude"` in the agent definition.
+- The gateway auto-generates temp IDs and updates to real session IDs on first turn.
+- Session IDs are UUIDs persisted for resume capability.
+- Approval requests use text commands (`!approve`, `!decline`, `!cancel`) on all platforms.
 
 ## Quick Start
 
@@ -165,6 +189,7 @@ sequenceDiagram
 - Bun `1.2+`
 - Node.js `20+` if you use `bun run start:backend`, `launchd`, or `systemd`
 - `codex` CLI installed on the host and already authenticated
+- `claude` CLI (Claude Code) version `2.x` or later if using Claude runtime agents
 - At least one chat platform configured:
   - Discord bot token with `MESSAGE CONTENT INTENT` enabled
   - or Feishu app credentials with `im.message.receive_v1` enabled for either webhook or long-connection mode
@@ -285,6 +310,10 @@ curl -i http://127.0.0.1:8788/readyz
 | Approve | `!approve [id]` | `/approve [id]` | `/approve [id]` | Uses latest pending approval if no id |
 | Decline | `!decline [id]` | `/decline [id]` | `/decline [id]` | Same routing rules as approve |
 | Cancel | `!cancel [id]` | `/cancel [id]` | `/cancel [id]` | Same routing rules as approve |
+| Quick approve | `!y` | `/y` | `/y` | Approves latest pending approval (alias for `!approve`) |
+| Quick decline | `!n` | `/n` | `/n` | Declines latest pending approval (alias for `!decline`) |
+| Screen | `!screen` | `/screen` | `/screen` | Shows last 60 lines of active turn output |
+| Log | `!log [n]` | `/log [n]` | `/log [n]` | Shows last n lines of output (default 20, max 200) |
 | Init repo | `!initrepo [force]` | `/initrepo` | Not supported | Discord only, requires `WORKSPACE_ROOT` |
 | Create channel | `!mkchannel <name>` | Not supported | Not supported | Discord only, requires `Manage Channels` |
 | Create repo channel | `!mkrepo <name>` | Not supported | Not supported | Creates a new Discord text channel plus a repo binding under `WORKSPACE_ROOT` |
@@ -294,6 +323,9 @@ curl -i http://127.0.0.1:8788/readyz
 | Unbind | `!unbind` | Not supported | Not supported | Removes the current Discord channel binding |
 | Set model | `!setmodel <model>` | Not supported | Not supported | Persists a per-channel model override |
 | Clear model | `!clearmodel` | Not supported | Not supported | Removes the per-channel model override |
+| Set agent | `!setagent <agent-id>` | Not supported | Not supported | Persists a per-channel agent override |
+| Clear agent | `!clearagent` | Not supported | Not supported | Removes the per-channel agent override |
+| Show agents | `!agents` | Not supported | Not supported | Shows configured agents with runtime/model info |
 | Resync | `!resync` | `/resync` | `/resync` | Re-syncs Discord managed channels |
 | Rebuild | `!rebuild` | `/rebuild` | `/rebuild` | Recreates managed Discord project channels |
 
@@ -319,6 +351,7 @@ Use `.env.example` as the exhaustive reference. The most important variables are
 | `DISCORD_BOT_TOKEN` | Enables Discord runtime |
 | `DISCORD_GUILD_ID` | Pins one guild when the bot belongs to multiple guilds |
 | `DISCORD_ALLOWED_USER_IDS` | Comma-separated Discord allowlist |
+| `DISCORD_BRIDGE_ROOT` | Explicit override for bridge root directory. Used by CLI commands to locate config, state, and log files. Takes priority over managed runtime detection |
 | `WORKSPACE_ROOT` | Shared base path used by Discord repo creation and as the default Feishu unbound workspace |
 | `PROJECTS_ROOT` | Legacy alias for `WORKSPACE_ROOT` |
 | `DISCORD_REPO_ROOT` | Legacy alias for `WORKSPACE_ROOT` |
@@ -340,6 +373,7 @@ Use `.env.example` as the exhaustive reference. The most important variables are
 | `FEISHU_WEBHOOK_PATH` | Optional webhook route path, default `/feishu/events`; only used in webhook mode |
 | `CODEX_BIN` | Path to `codex` executable |
 | `CODEX_HOME` | Optional Codex home override |
+| `CLAUDE_BIN` | Path to `claude` CLI executable (Claude Code). Auto-detected from PATH if unset. Must be version 2.x or later for Claude runtime agents |
 | `CODEX_APPROVAL_POLICY` | `untrusted`, `on-failure`, `on-request`, or `never` |
 | `CODEX_SANDBOX_MODE` | `read-only`, `workspace-write`, or `danger-full-access` |
 | `CODEX_EXTRA_WRITABLE_ROOTS` | Extra writable roots for worktrees or tool state |
@@ -661,6 +695,26 @@ Notes:
 - `agent-gateway stop` bootouts the launch agent
 - `agent-gateway status` reads heartbeat and runtime paths
 - `agent-gateway logs` tails the active log files
+
+#### Managed Runtime Path Priority
+
+When resolving runtime paths (config, state, logs), the CLI uses this priority:
+
+1. `DISCORD_BRIDGE_ROOT` environment variable (explicit override)
+2. Managed runtime root (`~/Library/Application Support/AgentGateway/<label>/runtime/`) if the LaunchAgent is installed
+3. Current working directory (fallback)
+
+This allows CLI commands to work correctly both during development (cwd) and in production deployments (managed runtime).
+
+#### Conditional Dependencies
+
+The managed runtime only includes dependencies for enabled platforms:
+
+- `discord.js` is included only when `DISCORD_BOT_TOKEN` is set
+- `@larksuiteoapi/node-sdk` is included only when both `FEISHU_APP_ID` and `FEISHU_APP_SECRET` are set
+- Core dependencies (`dotenv`, `https-proxy-agent`, `undici`, `@anthropic-ai/claude-agent-sdk`) are always included
+
+This reduces the production footprint when only one platform is enabled.
 
 Default log files:
 

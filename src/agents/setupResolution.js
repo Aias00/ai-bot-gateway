@@ -19,6 +19,7 @@ function toAgentDescriptors(configAgents) {
       agentId,
       model: typeof source.model === "string" ? source.model : undefined,
       enabled: typeof source.enabled === "boolean" ? source.enabled : undefined,
+      runtime: source.runtime === "claude" || source.runtime === "codex" ? source.runtime : undefined,
       capabilities: source.capabilities,
       meta: source.meta
     };
@@ -49,6 +50,21 @@ export function resolveSetupAgentAndModel(setup, config) {
     resolvedAgentId,
     resolvedModel: String(agentModel ?? defaultModel ?? "").trim() || null
   };
+}
+
+export function resolveRuntimeForAgent(agentId, config) {
+  const registry = createAgentRegistry(
+    toAgentDescriptors(config?.agents),
+    normalizeId(config?.defaultAgent) || null
+  );
+
+  const agent = agentId ? registry.getAgent(agentId) : null;
+  if (agent?.runtime) {
+    return agent.runtime;
+  }
+
+  // Fallback to global runtime config
+  return config?.runtime || "codex";
 }
 
 export function setupSupportsCapability(setup, config, capabilityName, fallback = true) {

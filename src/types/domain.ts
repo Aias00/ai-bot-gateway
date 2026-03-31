@@ -16,10 +16,21 @@ export interface ChannelSetup {
   allowFileWrites: boolean;
 }
 
+export interface AgentDescriptor {
+  agentId: string;
+  model?: string;
+  enabled?: boolean;
+  runtime?: "codex" | "claude";
+  capabilities?: Record<string, boolean>;
+  meta?: Record<string, unknown>;
+}
+
 export interface ThreadBinding {
   codexThreadId: string;
   repoChannelId: string;
   cwd: string;
+  runtime?: "codex" | "claude";
+  agentId?: string;
 }
 
 export interface RuntimePaths {

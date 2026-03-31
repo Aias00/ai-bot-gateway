@@ -370,6 +370,8 @@ describe("cli service commands", () => {
       }
     );
 
+    // discord.js is NOT included because DISCORD_BOT_TOKEN is not set
+    // @larksuiteoapi/node-sdk is included because Feishu is configured
     expect(manifest.dependencies).toEqual({
       "@larksuiteoapi/node-sdk": "^1.0.0",
       "dotenv": "^16.0.0",

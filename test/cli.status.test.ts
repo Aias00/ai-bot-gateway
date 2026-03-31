@@ -1,8 +1,22 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { runStatusCommand } from "../src/cli/commands/status.js";
+
+const ENV_KEYS = ["DISCORD_BRIDGE_ROOT"] as const;
+const ORIGINAL_ENV = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+
+afterEach(() => {
+  for (const key of ENV_KEYS) {
+    const value = ORIGINAL_ENV[key];
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+});
 
 describe("cli status command", () => {
   test("reports service pid from launchctl when available", async () => {
@@ -16,6 +30,7 @@ describe("cli status command", () => {
         "utf8"
       );
 
+      process.env.DISCORD_BRIDGE_ROOT = cwd;
       const result = await runStatusCommand([], { cwd, now: new Date() }, async () => {
         return {
           code: 0,
@@ -44,6 +59,7 @@ describe("cli status command", () => {
         "utf8"
       );
 
+      process.env.DISCORD_BRIDGE_ROOT = cwd;
       const result = await runStatusCommand([], { cwd, now: new Date() }, async () => {
         return {
           code: 3,

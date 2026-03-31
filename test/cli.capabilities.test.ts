@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { runCapabilitiesCommand } from "../src/cli/commands/capabilities.js";
 
-const ENV_KEYS = ["DISCORD_BOT_TOKEN", "FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_TRANSPORT"] as const;
+const ENV_KEYS = ["DISCORD_BOT_TOKEN", "FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_TRANSPORT", "DISCORD_BRIDGE_ROOT"] as const;
 const ORIGINAL_ENV = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
 afterEach(async () => {
@@ -55,6 +55,7 @@ describe("cli capabilities command", () => {
       process.env.FEISHU_APP_ID = "feishu-app";
       process.env.FEISHU_APP_SECRET = "feishu-secret";
       process.env.FEISHU_TRANSPORT = "long-connection";
+      process.env.DISCORD_BRIDGE_ROOT = cwd;
 
       const result = await runCapabilitiesCommand([], { cwd, now: new Date() });
       expect(result.ok).toBe(true);
@@ -105,6 +106,7 @@ describe("cli capabilities command", () => {
       );
 
       process.env.DISCORD_BOT_TOKEN = "discord-token";
+      process.env.DISCORD_BRIDGE_ROOT = cwd;
       const result = await runCapabilitiesCommand(["--compact"], { cwd, now: new Date() });
 
       expect(result.ok).toBe(true);

@@ -27,7 +27,19 @@ export function normalizeCodexNotification(event) {
     return {
       kind: "turn_completed",
       method,
-      threadId
+      threadId,
+      sessionId: params?.sessionId || null
+    };
+  }
+
+  if (method === "system/init") {
+    return {
+      kind: "system_init",
+      method,
+      threadId,
+      sessionId: params?.sessionId || null,
+      model: params?.model || null,
+      realSessionId: params?.realSessionId || null
     };
   }
 
@@ -38,6 +50,17 @@ export function normalizeCodexNotification(event) {
       method,
       threadId,
       errorMessage
+    };
+  }
+
+  if (method === "item/progress") {
+    return {
+      kind: "tool_progress",
+      method,
+      threadId,
+      tool_use_id: params?.tool_use_id || null,
+      tool_name: params?.tool_name || null,
+      elapsed_time_seconds: params?.elapsed_time_seconds || null
     };
   }
 

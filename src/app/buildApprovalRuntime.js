@@ -6,11 +6,12 @@ import { truncateForDiscordMessage } from "../render/messageRenderer.js";
 import { truncateStatusText } from "../turns/turnFormatting.js";
 
 export function buildApprovalRuntime(deps) {
-  const { codex, state, activeTurns, pendingApprovals, approvalButtonPrefix, safeSendToChannel, createApprovalToken, fetchChannelByRouteId } =
+  const { codex, agentClientRegistry, state, activeTurns, pendingApprovals, approvalButtonPrefix, safeSendToChannel, createApprovalToken, fetchChannelByRouteId } =
     deps;
 
   return createServerRequestRuntime({
     codex,
+    agentClientRegistry,
     state,
     activeTurns,
     pendingApprovals,

@@ -20,6 +20,25 @@ export function isIgnorableDiscordGatewayError(error) {
   return code === "ECONNRESET" && message.includes("Client network socket disconnected before secure TLS connection was established");
 }
 
+/**
+ * Check if an error is the SDK's "exited with code" error that occurs after
+ * successful completion. This happens with some API proxies that don't signal
+ * proper shutdown to the CLI process.
+ */
+export function isIgnorableClaudeExitError(error) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = String(error.message ?? "");
+  const stack = String(error.stack ?? "");
+  // SDK throws this after successful completion with some API configurations
+  // The error is raised asynchronously after the result has been consumed
+  return (
+    message.includes("Claude Code process exited with code 1") ||
+    (message.includes("exited with code") && stack.includes("ProcessTransport.getProcessExitError"))
+  );
+}
+
 export function registerRuntimeErrorGuards({ processRef = process, shutdown } = {}) {
   if (processRef[REGISTERED_FLAG]) {
     return;
@@ -39,6 +58,10 @@ export function registerRuntimeErrorGuards({ processRef = process, shutdown } = 
     const error = reason instanceof Error ? reason : new Error(String(reason ?? "Unhandled promise rejection"));
     if (isIgnorableDiscordGatewayError(error)) {
       console.warn(`ignoring unhandled Discord gateway rejection: ${error.message}`);
+      return;
+    }
+    if (isIgnorableClaudeExitError(error)) {
+      console.warn(`ignoring Claude SDK exit error (likely after successful completion): ${error.message}`);
       return;
     }
     if (!shouldGracefullyShutdownForRejection(reason)) {

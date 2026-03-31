@@ -101,6 +101,19 @@ function createFinalizeTurn(
   };
 }
 
+/**
+ * Creates a mock agent client registry that returns the given client.
+ */
+function createMockAgentClientRegistry(client: { request: (method: string, params?: unknown) => Promise<unknown> }) {
+  return {
+    getClient: () => client,
+    startAll: async () => {},
+    stopAll: async () => {},
+    getAllClients: () => new Map([["codex", client]]),
+    hasClient: () => true
+  };
+}
+
 describe("turnRunner restart/reconnect integration", () => {
   test("keeps in-flight turn alive after reconnect and settles without replay", async () => {
     process.env.DISCORD_TURN_SETTLE_TIMEOUT_MS = "500";
@@ -129,7 +142,7 @@ describe("turnRunner restart/reconnect integration", () => {
       queues: deps.queues,
       activeTurns: deps.activeTurns,
       state: deps.state,
-      codex,
+      agentClientRegistry: createMockAgentClientRegistry(codex),
       config: {
         defaultModel: "gpt-5.3-codex",
         defaultEffort: "medium",
@@ -194,7 +207,7 @@ describe("turnRunner restart/reconnect integration", () => {
       queues: deps.queues,
       activeTurns: deps.activeTurns,
       state: deps.state,
-      codex,
+      agentClientRegistry: createMockAgentClientRegistry(codex),
       config: {
         defaultModel: "gpt-5.3-codex",
         defaultEffort: "medium",
@@ -254,7 +267,7 @@ describe("turnRunner restart/reconnect integration", () => {
       queues: deps.queues,
       activeTurns: deps.activeTurns,
       state: deps.state,
-      codex,
+      agentClientRegistry: createMockAgentClientRegistry(codex),
       config: {
         defaultModel: "gpt-5.3-codex",
         defaultEffort: "medium",
@@ -312,7 +325,7 @@ describe("turnRunner restart/reconnect integration", () => {
       queues: deps.queues,
       activeTurns: deps.activeTurns,
       state: deps.state,
-      codex,
+      agentClientRegistry: createMockAgentClientRegistry(codex),
       config: {
         defaultModel: "gpt-5.3-codex",
         defaultEffort: "medium",

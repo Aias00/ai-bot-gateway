@@ -17,7 +17,12 @@ interface ProcessEntry {
   command: string;
 }
 
-const ALWAYS_INCLUDED_RUNTIME_DEPENDENCIES = ["dotenv", "https-proxy-agent", "undici"];
+const ALWAYS_INCLUDED_RUNTIME_DEPENDENCIES = [
+  "dotenv",
+  "https-proxy-agent",
+  "undici",
+  "@anthropic-ai/claude-agent-sdk"
+];
 const DISCORD_RUNTIME_DEPENDENCIES = ["discord.js"];
 const FEISHU_RUNTIME_DEPENDENCIES = ["@larksuiteoapi/node-sdk"];
 
@@ -471,22 +476,26 @@ async function pathExists(targetPath: string): Promise<boolean> {
 }
 
 async function resolveManagedRuntimeEnv(sourceEnvPath: string): Promise<Record<string, string>> {
-  const merged = { ...process.env };
+  const merged: Record<string, string | undefined> = { ...process.env };
+  const envEntries: [string, string][] = [];
+  for (const [key, value] of Object.entries(merged)) {
+    if (typeof value === "string") {
+      envEntries.push([key, value]);
+    }
+  }
   if (!(await pathExists(sourceEnvPath))) {
-    return Object.fromEntries(
-      Object.entries(merged).filter(([, value]) => typeof value === "string")
-    );
+    return Object.fromEntries(envEntries);
   }
   const envFile = await fs.readFile(sourceEnvPath, "utf8");
   const parsed = parseEnvFile(envFile);
   return {
     ...parsed,
-    ...Object.fromEntries(Object.entries(merged).filter(([, value]) => typeof value === "string"))
+    ...Object.fromEntries(envEntries)
   };
 }
 
 function parseEnvFile(raw: string): Record<string, string> {
-  const parsed = {};
+  const parsed: Record<string, string> = {};
   for (const line of String(raw ?? "").split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) {
@@ -512,7 +521,7 @@ function parseEnvFile(raw: string): Record<string, string> {
   return parsed;
 }
 
-export function buildManagedRuntimePackageManifest(sourcePackageJson: Record<string, any>, runtimeEnv: Record<string, string> = {}) {
+export function buildManagedRuntimePackageManifest(sourcePackageJson: { dependencies?: Record<string, string> }, runtimeEnv: Record<string, string> = {}) {
   const dependencies = sourcePackageJson?.dependencies && typeof sourcePackageJson.dependencies === "object"
     ? sourcePackageJson.dependencies
     : {};

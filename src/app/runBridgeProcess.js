@@ -22,6 +22,7 @@ export async function runBridgeProcess(context) {
     setChannelSetups,
     discord,
     codex,
+    agentClientRegistry,
     safeReply,
     safeSendToChannel,
     fetchChannelByRouteId,
@@ -80,6 +81,7 @@ export async function runBridgeProcess(context) {
 
   wireBridgeListeners({
     codex,
+    agentClientRegistry,
     discord,
     handleNotification: runtimeAdapters.handleNotification,
     handleServerRequest: runtimeAdapters.handleServerRequest,
@@ -90,6 +92,7 @@ export async function runBridgeProcess(context) {
 
   const shutdownImpl = createShutdownHandler({
     codex,
+    agentClientRegistry,
     discord,
     stopBackendRuntime: () => backendRuntime?.stop?.(),
     stopPlatformRuntimes: () => platformRegistry?.stop?.(),
@@ -113,6 +116,7 @@ export async function runBridgeProcess(context) {
   });
   await startBridgeRuntime({
     codex,
+    agentClientRegistry,
     fs,
     generalChannelCwd,
     platformRegistry,

@@ -74,3 +74,8 @@ Key env vars (see `.env.example` for full list):
 - `CODEX_APPROVAL_POLICY` - `never` | `untrusted` | `on-failure` | `on-request`
 - `CODEX_SANDBOX_MODE` - `read-only` | `workspace-write` | `danger-full-access`
 - `BACKEND_HTTP_ENABLED`, `BACKEND_HTTP_HOST`, `BACKEND_HTTP_PORT`
+
+## Squad Collaboration
+
+This project uses squad for multi-agent collaboration. Run `squad help` for all commands and usage guide.
+

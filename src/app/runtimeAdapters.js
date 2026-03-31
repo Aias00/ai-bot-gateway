@@ -13,7 +13,7 @@ export function createRuntimeAdapters(deps) {
     if (attachmentConfig.attachmentLogEnabled !== true) {
       return;
     }
-    let rendered = "";
+    let rendered;
     try {
       rendered = JSON.stringify(details);
     } catch {

@@ -7,7 +7,8 @@ const RUNTIME_REF_KEYS = [
   "notificationRuntime",
   "serverRequestRuntime",
   "shutdown",
-  "turnRunner"
+  "turnRunner",
+  "agentClientRegistry"
 ];
 
 const RuntimePhase = {

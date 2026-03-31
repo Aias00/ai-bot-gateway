@@ -25,6 +25,7 @@ export function loadRuntimeEnv() {
   const configPath = path.resolve(process.env.CHANNEL_CONFIG_PATH ?? "config/channels.json");
   const statePath = path.resolve(process.env.STATE_PATH ?? "data/state.json");
   const codexBin = process.env.CODEX_BIN ?? "codex";
+  const claudeBin = process.env.CLAUDE_BIN ?? "claude";
   const codexHomeEnv = process.env.CODEX_HOME;
   const repoRootEnv = process.env.WORKSPACE_ROOT ?? process.env.PROJECTS_ROOT ?? process.env.DISCORD_REPO_ROOT;
   const repoRootPath = repoRootEnv ? path.resolve(repoRootEnv) : null;
@@ -121,6 +122,7 @@ export function loadRuntimeEnv() {
     configPath,
     statePath,
     codexBin,
+    claudeBin,
     codexHomeEnv,
     repoRootPath,
     managedChannelTopicPrefix,

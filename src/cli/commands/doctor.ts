@@ -206,7 +206,7 @@ function runPlatformAdapterChecks(): {
   });
   const feishuPlatform = createFeishuPlatform({ runtime: runtimeStub });
 
-  const platforms = [discordPlatform, feishuPlatform];
+  const platforms = [discordPlatform, feishuPlatform] as Record<string, unknown>[];
   const requiredPlatformKeys = ["platformId", "enabled", "capabilities", "canHandleRouteId", "fetchChannelByRouteId", "start", "stop"];
   const requiredCapabilities = [
     "supportsPlainMessages",
@@ -223,12 +223,13 @@ function runPlatformAdapterChecks(): {
   for (const platform of platforms) {
     const platformId = String(platform?.platformId ?? "unknown");
     for (const key of requiredPlatformKeys) {
-      if (!(key in (platform ?? {}))) {
+      if (!(key in platform)) {
         missingShape.push(`${platformId}.${key}`);
       }
     }
+    const capabilities = platform.capabilities as Record<string, unknown> | undefined;
     for (const capabilityName of requiredCapabilities) {
-      if (!(capabilityName in (platform?.capabilities ?? {}))) {
+      if (!capabilities || !(capabilityName in capabilities)) {
         missingCaps.push(`${platformId}.${capabilityName}`);
       }
     }

@@ -73,7 +73,14 @@ export function buildCommandRuntime(deps) {
     safeReply,
     getChannelSetups,
     setChannelSetups,
-    getPlatformRegistry
+    getPlatformRegistry,
+    getOutputBufferSnapshot: (tracker, lineCount) => {
+      if (!tracker?.outputBuffer || tracker.outputBuffer.length === 0) {
+        return [];
+      }
+      const start = Math.max(0, tracker.outputBuffer.length - lineCount);
+      return tracker.outputBuffer.slice(start);
+    }
   });
   const {
     getHelpText,
