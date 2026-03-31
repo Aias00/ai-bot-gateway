@@ -2,20 +2,21 @@
 
 [![Agent Gateway Hero](public/images/cover_new.png)](https://youtu.be/RRF-F5jDS50)
 
-Agent gateway for Codex app-server.
+Multi-platform agent gateway for Codex app-server and Claude Code.
 
 ## What It Does
 
-- Auto-discovers existing project paths (`cwd`) from Codex via `thread/list`.
-- Creates/manages one Discord text channel per discovered project.
-- Keeps all managed project channels under the `codex-projects` category.
-- Persists one Codex thread binding per repo channel:
-  - repo text channel -> one Codex app-server thread
-- Queues messages per repo channel (one active turn per channel).
-- Emits assistant output as paragraph messages (no single-message edit loop).
-- Emits separate status messages for non-agent items (tools/commands/etc.).
-- Handles approval requests via buttons (with command fallback).
-- Uploads attachment files for configured item types (default: `imageView`, `toolCall`, `mcpToolCall`, `commandExecution`).
+- Bridges Discord and Feishu chats into route-scoped agent sessions.
+- Supports mixed Codex and Claude runtimes from one shared `channels.json`.
+- Auto-discovers Discord project routes from Codex `cwd` metadata and manages project channels under `codex-projects`.
+- Supports config-driven Feishu route bindings plus open unbound-chat fallback mode.
+- Persists one session binding per route:
+  - Discord/Feishu route -> Codex thread id or Claude session UUID
+- Queues one active turn per route and keeps recovery metadata for restart-safe turn status + retry flows.
+- Streams assistant output as segmented messages with separate status/tool updates instead of one long edited message.
+- Handles approvals through Discord buttons plus text commands, or text commands only on Feishu.
+- Supports inbound image input on both platforms, plus Feishu inbound file bridging and outbound file/image uploads.
+- Exposes operator HTTP endpoints for health, readiness, turn lookup, and retry.
 
 ## Architecture Map
 
@@ -28,6 +29,8 @@ src/app/runBridgeProcess.js   Wire listeners/runtimes/startup/shutdown flow
 src/config/loadConfig.js      Env + channel config loading/normalization
 src/channels/context.js       Channel/repo context and bindings
 src/codexRpcClient.js         Codex app-server transport
+src/claudeClient.js           Claude Code SDK transport wrapper
+src/clients/agentClientRegistry.js Runtime-aware client registry (`codex` / `claude`)
 src/codex/turnRunner.js       Per-channel queue and turn lifecycle
 src/codex/notificationMapper.js Normalized notification boundaries
 src/codex/approvalPayloads.js Approval request/response mapping
@@ -42,10 +45,12 @@ src/types/**                  TS boundary contracts for cutover
 
 - Bun 1.2+
 - `codex` CLI installed on the host and authenticated
-- Discord bot token with:
-  - `MESSAGE CONTENT INTENT` enabled in the Discord developer portal
+- For Discord:
+  - bot token with `MESSAGE CONTENT INTENT` enabled
   - channel read/send permissions in your server
-- Discord guild (server) id
+  - `DISCORD_GUILD_ID` if the bot belongs to more than one guild
+- For Feishu:
+  - app credentials with message event subscription enabled
 
 ## Setup
 
@@ -68,8 +73,8 @@ sequenceDiagram
   participant Platform as Platform runtime
   participant Router as Command router / context resolver
   participant Queue as Turn runner
-  participant Codex as Codex RPC client
-  participant App as codex app-server
+  participant Agent as Agent client registry
+  participant Backend as codex app-server / claude CLI SDK
   participant Notify as Notification / approval runtime
 
   User->>Chat: Send plain prompt or /command
@@ -81,11 +86,11 @@ sequenceDiagram
     Router-->>Chat: Return command response
   else Prompt path
     Router->>Queue: Enqueue route-scoped job
-    Queue->>Codex: thread/resume or thread/start
-    Queue->>Codex: turn/start(input, model, sandbox, approval)
-    Codex->>App: JSON-RPC over stdio
-    App-->>Codex: notifications / server requests
-    Codex-->>Notify: item lifecycle, deltas, approvals, completion
+    Queue->>Agent: thread/resume or thread/start
+    Queue->>Agent: turn/start(input, model, sandbox, approval)
+    Agent->>Backend: Codex JSON-RPC or Claude SDK query
+    Backend-->>Agent: notifications / server requests / stream events
+    Agent-->>Notify: normalized item lifecycle, deltas, approvals, completion
     Notify-->>Chat: Thinking/status updates, approval prompts, final summary
   end
 ```
@@ -96,11 +101,11 @@ sequenceDiagram
 2. The route is resolved to a setup with `cwd`, model, mode, and write policy.
 3. Command messages are handled immediately by the shared command router.
 4. Prompt messages are queued by route, so one chat never runs overlapping turns.
-5. The turn runner resumes or starts a Codex thread for that route.
-6. `turn/start` is sent to `codex app-server` with model, sandbox, and approval policy.
+5. The turn runner resolves the correct runtime client and resumes or starts the route session.
+6. `turn/start` is sent to either `codex app-server` or the Claude Code SDK with model, sandbox, and approval policy.
 7. Notifications stream back into the notification runtime, which renders status, summaries, diffs, and attachments.
 8. Approval requests are intercepted by the approval runtime and sent back to the originating route.
-9. On success or failure, the route's current thread binding is persisted for the next message.
+9. On success or failure, the route's current session binding is persisted for the next message.
 
 ## Supported Route Types
 
@@ -108,14 +113,15 @@ sequenceDiagram
 | --- | --- | --- | --- | --- |
 | Discord | Managed repo text channel | Auto-discovered from Codex `cwd`, or bound with `!initrepo` | Writable by default | Plain text messages become prompts |
 | Discord | `#general` | Existing text channel matched by ID or name | Read-only | Useful for discussion and planning |
-| Feishu | Mapped repo chat | Explicit `feishu:<chat_id>` entry in `config/channels.json` | Writable by default | Text, image input, segmented streaming replies |
+| Feishu | Mapped repo chat | Explicit `feishu:<chat_id>` entry in `config/channels.json` | Writable by default | Text, image, and file input; platform-native replies and uploads |
+| Feishu | Open unbound chat | Any chat when `FEISHU_UNBOUND_CHAT_MODE=open` | Writable by default | Falls back to `FEISHU_UNBOUND_CHAT_CWD`, then `WORKSPACE_ROOT`, then bridge cwd |
 | Feishu | General chat | `FEISHU_GENERAL_CHAT_ID` | Read-only | Similar to Discord `#general` |
 
 ## Capability Summary
 
 | Capability | Discord | Feishu |
 | --- | --- | --- |
-| Persistent Codex thread per route | Yes | Yes |
+| Persistent agent session per route | Yes | Yes |
 | In-chat route rebinding | `!setpath`, `/setpath` | `/setpath` |
 | Auto-discover routes from Codex `cwd` | Yes | No |
 | Auto-create/manage chat containers | Yes | No |
@@ -124,8 +130,10 @@ sequenceDiagram
 | Approval buttons | Yes | No |
 | Text approval commands | Yes | Yes |
 | Image input bridging | Yes | Yes |
-| Streaming answer output | Status-message edits | Segmented text messages |
+| File input bridging | No | Yes |
+| Incremental answer streaming | Yes | Yes |
 | Read-only general chat mode | Yes | Yes |
+| Open unbound chat fallback | No | Yes |
 | Webhook-less transport | N/A | Yes, `FEISHU_TRANSPORT=long-connection` |
 
 ## Runtime Model
@@ -136,14 +144,14 @@ sequenceDiagram
 - Discord routes use the raw text channel id.
 - Feishu routes use `feishu:<chat_id>`.
 - Each route resolves to one setup object: `cwd`, `model`, mode, and write policy.
-- Each route also maps to one persistent Codex thread binding in `data/state.json`.
+- Each route also maps to one persistent runtime session binding in `data/state.json`.
 
 ### Execution Model
 
 - Every route has its own FIFO queue.
 - Only one turn per route runs at a time.
-- The bridge tries `thread/resume` before `thread/start`, so the same chat keeps context.
-- If the `cwd` for a route changes, the old thread binding is cleared and the next prompt starts fresh in the new working directory.
+- The bridge tries `thread/resume` before `thread/start`, so the same chat keeps context across turns.
+- If the `cwd` for a route changes, the old session binding is cleared and the next prompt starts fresh in the new working directory.
 
 ### Platform Model
 
@@ -171,16 +179,17 @@ The gateway supports two agent runtimes:
 | --- | --- | --- |
 | Backend | `codex app-server` JSON-RPC | `claude` CLI SDK |
 | Session model | Thread ID from `thread/start` | Session ID from `system/init` |
-| Model filtering | Pass all models | Filter codex default models |
-| Approval UI | Discord buttons / text commands | Text commands only |
+| Stored resume token | Codex thread id | Claude session UUID |
+| Model handling | Uses configured model directly | Uses configured Claude model through the SDK/CLI |
+| Approval surface | Platform-driven: Discord buttons + text, Feishu text | Platform-driven: Discord buttons + text, Feishu text |
 | Session resume | `thread/resume` with thread ID | `--resume` with session UUID |
-| Streaming | Status message edits | Segmented text messages |
+| Notification flow | Codex notifications normalized into render items | Claude SDK messages normalized into the same render pipeline |
 
 For Claude agents:
 - Configure `runtime: "claude"` in the agent definition.
 - The gateway auto-generates temp IDs and updates to real session IDs on first turn.
 - Session IDs are UUIDs persisted for resume capability.
-- Approval requests use text commands (`!approve`, `!decline`, `!cancel`) on all platforms.
+- Approval UX is decided by platform, not by runtime: Discord can still render buttons, while Feishu uses text commands.
 
 ## Quick Start
 
@@ -276,7 +285,7 @@ curl -i http://127.0.0.1:8788/readyz
 - Managed repo channels accept plain text messages as prompts.
 - `!ask <prompt>` does the same thing explicitly.
 - Slash commands are registered on startup and route to the same command handler.
-- Image attachments are forwarded into Codex turns.
+- Image attachments are forwarded into agent turns.
 - `#general` stays read-only even if the bridge can write inside repo channels.
 - `!initrepo` creates and binds a repo under `WORKSPACE_ROOT`.
 - Creating a new text channel under the managed `codex-projects` category auto-runs the same repo bootstrap flow as `!initrepo` without `force`.
@@ -287,11 +296,12 @@ curl -i http://127.0.0.1:8788/readyz
 - Open unbound chats inherit the configured sandbox mode, so they can perform the same writes and command execution as bound repo chats.
 - Plain text in a mapped repo chat or an open unbound chat is treated as a prompt.
 - Commands use leading slash text such as `/status`, `/ask`, `/approve`.
-- `/setpath /absolute/path` rebinds the current chat to an existing repo path and clears the old Codex thread binding.
+- `/setpath /absolute/path` rebinds the current chat to an existing repo path and clears the old session binding.
 - In group chats, plain prompts require `@bot` when `FEISHU_REQUIRE_MENTION_IN_GROUP=1`.
-- Feishu plain text and image messages in mapped chats and open unbound chats are bridged into Codex turns.
+- Feishu plain text, image, and file messages in mapped chats and open unbound chats are bridged into agent turns.
 - `!initrepo` is not supported on Feishu. Chat bindings stay config-driven.
 - `/where` works even before a chat is explicitly bound and returns `chat_id`, `route_id`, `sender_open_id`, and the effective workspace mode.
+- `/joinbot <chat_id|feishu:chat_id>` invites the current Feishu app bot into another chat.
 - If `im.chat.member.bot.added_v1` is subscribed, the bot posts an onboarding message when it is added to a new group.
 - `FEISHU_TRANSPORT=long-connection` skips callback URLs and receives events over WebSocket instead.
 
@@ -302,18 +312,19 @@ curl -i http://127.0.0.1:8788/readyz
 | Help | `!help` | `/help` | `/help` | Show usage and current command set |
 | Ask | `!ask <prompt>` | `/ask prompt:<text>` | `/ask <prompt>` | Repo channel or mapped chat |
 | Status | `!status` | `/status` | `/status` | Queue depth, thread, sandbox, mode |
-| New thread | `!new` | `/new` | `/new` | Clears current Codex thread binding |
+| New thread | `!new` | `/new` | `/new` | Clears current runtime session binding |
 | Restart | `!restart [reason]` | `/restart` | `/restart [reason]` | Requires supervisor/service to act on restart file |
 | Interrupt | `!interrupt` | `/interrupt` | `/interrupt` | Interrupts current turn |
-| Where | `!where` | `/where` | `/where` | Shows cwd, state path, thread binding; on Feishu it also helps discover identifiers before binding |
-| Set path | `!setpath <abs-path>` | `/setpath path:<abs-path>` | `/setpath <abs-path>` | Rebinds the current chat to an existing repo path and clears the current Codex thread binding |
+| Where | `!where` | `/where` | `/where` | Shows cwd, state path, and current session binding; on Feishu it also helps discover identifiers before binding |
+| Agents | `!agents` | `/agents` | `/agents` | Shows configured agents with runtime/model info |
+| Set path | `!setpath <abs-path>` | `/setpath path:<abs-path>` | `/setpath <abs-path>` | Rebinds the current chat to an existing repo path and clears the current session binding |
 | Approve | `!approve [id]` | `/approve [id]` | `/approve [id]` | Uses latest pending approval if no id |
 | Decline | `!decline [id]` | `/decline [id]` | `/decline [id]` | Same routing rules as approve |
 | Cancel | `!cancel [id]` | `/cancel [id]` | `/cancel [id]` | Same routing rules as approve |
-| Quick approve | `!y` | `/y` | `/y` | Approves latest pending approval (alias for `!approve`) |
-| Quick decline | `!n` | `/n` | `/n` | Declines latest pending approval (alias for `!decline`) |
-| Screen | `!screen` | `/screen` | `/screen` | Shows last 60 lines of active turn output |
-| Log | `!log [n]` | `/log [n]` | `/log [n]` | Shows last n lines of output (default 20, max 200) |
+| Quick approve | `!y` | Not supported | `/y` | Approves latest pending approval (alias for `!approve`) |
+| Quick decline | `!n` | Not supported | `/n` | Declines latest pending approval (alias for `!decline`) |
+| Screen | `!screen` | Not supported | `/screen` | Shows last 60 lines of active turn output |
+| Log | `!log [n]` | Not supported | `/log [n]` | Shows last n lines of output (default 20, max 200) |
 | Init repo | `!initrepo [force]` | `/initrepo` | Not supported | Discord only, requires `WORKSPACE_ROOT` |
 | Create channel | `!mkchannel <name>` | Not supported | Not supported | Discord only, requires `Manage Channels` |
 | Create repo channel | `!mkrepo <name>` | Not supported | Not supported | Creates a new Discord text channel plus a repo binding under `WORKSPACE_ROOT` |
@@ -325,18 +336,24 @@ curl -i http://127.0.0.1:8788/readyz
 | Clear model | `!clearmodel` | Not supported | Not supported | Removes the per-channel model override |
 | Set agent | `!setagent <agent-id>` | Not supported | Not supported | Persists a per-channel agent override |
 | Clear agent | `!clearagent` | Not supported | Not supported | Removes the per-channel agent override |
-| Show agents | `!agents` | Not supported | Not supported | Shows configured agents with runtime/model info |
 | Resync | `!resync` | `/resync` | `/resync` | Re-syncs Discord managed channels |
 | Rebuild | `!rebuild` | `/rebuild` | `/rebuild` | Recreates managed Discord project channels |
+| Join bot | Not supported | Not supported | `/joinbot <chat_id|feishu:chat_id>` | Feishu only; invites the current app bot into another chat |
 
 Approval buttons are available on Discord when approvals are enabled.
+Discord slash commands intentionally cover the curated operator set; quick approval aliases, output inspection, and manual binding/model override commands remain text-only.
 
 ## Approvals and Sandbox
 
 - Default approval policy is `never`.
+- Supported approval policies are `untrusted`, `on-failure`, `on-request`, `never`, `bypass`, and `skip-all`.
 - Default sandbox mode is `workspace-write`.
 - Repo channels, mapped Feishu chats, and open unbound Feishu chats inherit the configured sandbox mode.
 - Discord `#general` and Feishu general chat force `read-only` mode and disable file writes.
+- Approval UX is platform-driven:
+  - Discord can show buttons and still accepts text commands
+  - Feishu uses text commands only
+- `bypass` and `skip-all` map to the underlying runtime's "skip permissions" behavior.
 - If you want interactive approvals, set `CODEX_APPROVAL_POLICY` to `untrusted`, `on-failure`, or `on-request`.
 - Unsupported dynamic tool-call requests are rejected with a fallback response.
 
@@ -373,8 +390,12 @@ Use `.env.example` as the exhaustive reference. The most important variables are
 | `FEISHU_WEBHOOK_PATH` | Optional webhook route path, default `/feishu/events`; only used in webhook mode |
 | `CODEX_BIN` | Path to `codex` executable |
 | `CODEX_HOME` | Optional Codex home override |
+| `AGENT_RUNTIME` | Global runtime fallback: `codex` or `claude` |
 | `CLAUDE_BIN` | Path to `claude` CLI executable (Claude Code). Auto-detected from PATH if unset. Must be version 2.x or later for Claude runtime agents |
-| `CODEX_APPROVAL_POLICY` | `untrusted`, `on-failure`, `on-request`, or `never` |
+| `ANTHROPIC_BASE_URL` | Optional Anthropic-compatible API base URL passed through to Claude Code |
+| `ANTHROPIC_AUTH_TOKEN` | Auth token for an Anthropic-compatible Claude endpoint |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` / `ANTHROPIC_DEFAULT_SONNET_MODEL` / `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Optional Claude model remaps for proxy-backed deployments |
+| `CODEX_APPROVAL_POLICY` | `untrusted`, `on-failure`, `on-request`, `never`, `bypass`, or `skip-all` |
 | `CODEX_SANDBOX_MODE` | `read-only`, `workspace-write`, or `danger-full-access` |
 | `CODEX_EXTRA_WRITABLE_ROOTS` | Extra writable roots for worktrees or tool state |
 | `CHANNEL_CONFIG_PATH` | `config/channels.json` override |
@@ -392,6 +413,13 @@ Use `.env.example` as the exhaustive reference. The most important variables are
 | `RESTART_COOLDOWN_SECONDS` | Cooldown sleep when restart storm is detected (default `120`) |
 | `FEISHU_EVENT_DEDUPE_PATH` | Persistent dedupe cache for Feishu event IDs (default `data/feishu-seen-events.json`) |
 | `FEISHU_EVENT_DEDUPE_TTL_MS` | TTL for Feishu dedupe event cache (default `86400000`) |
+| `FEISHU_SEGMENTED_STREAMING` | Enable incremental segmented message flushes for Feishu replies |
+| `FEISHU_STREAM_MIN_CHARS` | Minimum buffered chars before a Feishu incremental flush (default `80`) |
+| `FEISHU_STATUS_REACTIONS` / `FEISHU_REACTION_*` | Optional Feishu reactions for running/working/done/error turn states |
+| `TURN_RECOVERY_NOTIFY` | Controls whether restart recovery emits notice messages |
+| `TURN_REQUEST_STATUS_TTL_MS` | Retention window for turn request status records used by backend HTTP lookup/retry |
+| `TURN_REQUEST_STATUS_MAX_RECORDS` | Global cap for stored turn request status records |
+| `TURN_REQUEST_STATUS_MAX_PER_THREAD` | Per-thread cap for stored turn request status records |
 | `CONFIG_GOVERNANCE_MODE` | `strict` (default) or `warn`; strict mode aborts startup on invalid ops config |
 | `HTTP_PROXY` / `HTTPS_PROXY` | Optional upstream proxy for Discord/Codex web traffic |
 
@@ -491,7 +519,7 @@ Env precedence:
 | File | Purpose |
 | --- | --- |
 | `config/channels.json` | Static route mappings, default model/approval/sandbox config, manual `setpath` updates |
-| `data/state.json` | Route -> Codex thread bindings |
+| `data/state.json` | Route -> runtime session bindings (Codex thread ids or Claude session ids) |
 | `data/bridge-heartbeat.json` | Liveness/heartbeat metadata used by `cli status` |
 | `data/restart-request.json` | Requested restarts from chat/CLI |
 | `data/restart-ack.json` | Supervisor acknowledgement of a restart request |
@@ -504,7 +532,7 @@ Env precedence:
 Practical distinction:
 
 - `config/channels.json` answers "which repo should this route use?"
-- `data/state.json` answers "which Codex thread is this route currently talking to?"
+- `data/state.json` answers "which runtime session is this route currently talking to?"
 
 ## Backend HTTP
 
@@ -513,7 +541,17 @@ Endpoints:
 - `GET /` returns a small service descriptor and enabled endpoint list
 - `GET /healthz` returns liveness, queue counts, approval counts, and mapped-channel count
 - `GET /readyz` returns `200` only after Codex and configured chat runtimes finish startup
+- `GET /turns/:request_id` returns persisted request status for a known turn request id
+- `GET /turns/by-source/:source_message_id` returns persisted request status by original inbound message id
+- `POST /turns/:request_id/retry` requeues a failed/cancelled/recovery-unavailable request when the caller scope matches
 - `POST /feishu/events` handles Feishu event callbacks when `FEISHU_TRANSPORT=webhook`
+
+Turn lookup and retry endpoints accept route scope through either query params or headers:
+
+- `route_id` or `x-route-id`
+- `platform` or `x-platform`
+- `discord_channel_id` / `x-discord-channel-id`
+- `feishu_chat_id` / `x-feishu-chat-id`
 
 Typical bind config:
 
