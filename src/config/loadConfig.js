@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { normalizeBots } from "../bots/normalizeBots.js";
 import { parsePathListEnv as parsePathListEnvFromUtil } from "../utils/pathEnv.js";
 
 export async function loadConfig(filePath, options = {}) {
@@ -67,6 +68,23 @@ export async function loadConfig(filePath, options = {}) {
   }
   const defaultAgent = typeof parsed.defaultAgent === "string" ? parsed.defaultAgent.trim() : "";
 
+  const envRuntime = process.env.AGENT_RUNTIME;
+  const rawRuntime = typeof envRuntime === "string" ? envRuntime : parsed.runtime;
+  const parsedRuntime = normalizeRuntime(rawRuntime);
+  if (rawRuntime !== undefined && rawRuntime !== null && parsedRuntime === null) {
+    throw new Error(
+      `Invalid runtime '${rawRuntime}'. Use one of: codex, claude.`
+    );
+  }
+  const runtime = parsedRuntime ?? "codex";
+
+  const bots = normalizeBots({
+    rawBots: parsed && typeof parsed === "object" ? parsed.bots : undefined,
+    legacyChannels: normalizedChannels,
+    agents: normalizedAgents,
+    defaultRuntime: runtime
+  });
+
   let allowedUserIds = Array.isArray(parsed.allowedUserIds)
     ? parsed.allowedUserIds.filter((value) => typeof value === "string")
     : [];
@@ -128,18 +146,9 @@ export async function loadConfig(filePath, options = {}) {
   }
   const sandboxMode = parsedSandboxMode ?? "workspace-write";
 
-  const envRuntime = process.env.AGENT_RUNTIME;
-  const rawRuntime = typeof envRuntime === "string" ? envRuntime : parsed.runtime;
-  const parsedRuntime = normalizeRuntime(rawRuntime);
-  if (rawRuntime !== undefined && rawRuntime !== null && parsedRuntime === null) {
-    throw new Error(
-      `Invalid runtime '${rawRuntime}'. Use one of: codex, claude.`
-    );
-  }
-  const runtime = parsedRuntime ?? "codex";
-
   return {
     channels: normalizedChannels,
+    bots,
     defaultAgent: defaultAgent || null,
     agents: normalizedAgents,
     defaultModel:

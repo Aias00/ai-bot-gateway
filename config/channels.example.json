@@ -6,12 +6,6 @@
   "approvalPolicy": "never",
   "sandboxMode": "workspace-write",
   "runtime": "codex",
-  "allowedUserIds": [
-    "123456789012345678"
-  ],
-  "allowedFeishuUserIds": [
-    "ou_xxxxxxxxxxxxxxxxx"
-  ],
   "agents": {
     "codex-default": {
       "model": "gpt-5.3-codex",
@@ -21,23 +15,7 @@
         "supportsImageInput": true
       }
     },
-    "codex-lite": {
-      "model": "gpt-5.3-codex",
-      "runtime": "codex",
-      "enabled": true,
-      "capabilities": {
-        "supportsImageInput": false
-      }
-    },
     "claude-default": {
-      "model": "claude-sonnet-4-6",
-      "runtime": "claude",
-      "enabled": true,
-      "capabilities": {
-        "supportsImageInput": true
-      }
-    },
-    "claude-unrestricted": {
       "model": "claude-sonnet-4-6",
       "runtime": "claude",
       "enabled": true,
@@ -46,15 +24,47 @@
       }
     }
   },
-  "channels": {
-    "123456789012345678": {
-      "cwd": "/absolute/path/to/discord/repo",
-      "model": "gpt-5.3-codex",
-      "agentId": "codex-default"
+  "bots": {
+    "discord-codex-main": {
+      "platform": "discord",
+      "runtime": "codex",
+      "auth": {
+        "tokenEnv": "DISCORD_BOT_TOKEN_MAIN"
+      },
+      "settings": {
+        "guildId": "123456789012345678",
+        "allowedUserIdsEnv": "DISCORD_ALLOWED_USER_IDS_MAIN",
+        "generalChannelId": "123456789012345679",
+        "generalCwd": "/absolute/path/to/discord/general"
+      },
+      "routes": {
+        "123456789012345680": {
+          "cwd": "/absolute/path/to/discord/repo",
+          "agentId": "codex-default"
+        }
+      }
     },
-    "feishu:oc_xxxxxxxxxxxxxxxxx": {
-      "cwd": "/absolute/path/to/feishu/repo",
-      "agentId": "claude-default"
+    "feishu-claude-support": {
+      "platform": "feishu",
+      "runtime": "claude",
+      "auth": {
+        "appIdEnv": "FEISHU_APP_ID_SUPPORT",
+        "appSecretEnv": "FEISHU_APP_SECRET_SUPPORT",
+        "verificationTokenEnv": "FEISHU_VERIFICATION_TOKEN_SUPPORT"
+      },
+      "settings": {
+        "transport": "webhook",
+        "webhookPath": "/feishu/support/events",
+        "allowedOpenIdsEnv": "FEISHU_ALLOWED_OPEN_IDS_SUPPORT",
+        "generalChatId": "oc_xxxxxxxxxxxxxxxxx",
+        "generalCwd": "/absolute/path/to/feishu/general"
+      },
+      "routes": {
+        "oc_repo_1": {
+          "cwd": "/absolute/path/to/feishu/repo",
+          "agentId": "claude-default"
+        }
+      }
     }
   }
 }
