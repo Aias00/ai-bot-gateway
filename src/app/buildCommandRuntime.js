@@ -4,6 +4,7 @@ import { createCommandRouter } from "../commands/router.js";
 
 export function buildCommandRuntime(deps) {
   const {
+    bot,
     ChannelType,
     path,
     fs,
@@ -29,23 +30,29 @@ export function buildCommandRuntime(deps) {
     getPlatformRegistry
   } = deps;
 
-  const bootstrapService = createBootstrapService({
-    ChannelType,
-    path,
-    discord,
-    codex,
-    config,
-    state,
-    projectsCategoryName,
-    managedChannelTopicPrefix,
-    managedThreadTopicPrefix,
-    isDiscordMissingPermissionsError,
-    getChannelSetups,
-    setChannelSetups
-  });
-  const { bootstrapChannelMappings, makeChannelName } = bootstrapService;
+  const bootstrapService =
+    String(bot?.platform ?? "").trim().toLowerCase() === "discord" && discord
+      ? createBootstrapService({
+          bot,
+          ChannelType,
+          path,
+          discord,
+          codex,
+          config,
+          state,
+          projectsCategoryName,
+          managedChannelTopicPrefix,
+          managedThreadTopicPrefix,
+          isDiscordMissingPermissionsError,
+          getChannelSetups,
+          setChannelSetups
+        })
+      : null;
+  const bootstrapChannelMappings = bootstrapService?.bootstrapChannelMappings ?? null;
+  const makeChannelName = bootstrapService?.makeChannelName ?? fallbackMakeChannelName;
 
   const commandRouter = createCommandRouter({
+    bot,
     ChannelType,
     isGeneralChannel,
     fs,
@@ -73,6 +80,7 @@ export function buildCommandRuntime(deps) {
     safeReply,
     getChannelSetups,
     setChannelSetups,
+    bootstrapManagedRoutes: bootstrapChannelMappings,
     getPlatformRegistry,
     getOutputBufferSnapshot: (tracker, lineCount) => {
       if (!tracker?.outputBuffer || tracker.outputBuffer.length === 0) {
@@ -106,4 +114,13 @@ export function buildCommandRuntime(deps) {
     handleBindCommand,
     handleUnbindCommand
   };
+}
+
+function fallbackMakeChannelName(input) {
+  const cleaned = String(input ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
+  return (cleaned || "repo").slice(0, 100);
 }

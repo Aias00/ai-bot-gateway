@@ -1,13 +1,17 @@
-import { isFeishuRouteId } from "../feishu/ids.js";
+import { isFeishuRouteId, parseFeishuRouteId } from "../feishu/ids.js";
 import { isFeishuWebhookTransport } from "../feishu/transport.js";
 
 export function createFeishuPlatform(deps) {
-  const { runtime } = deps;
+  const { bot, runtime } = deps;
+  const botId = String(bot?.botId ?? "").trim();
+  const instanceKey = botId || "feishu";
   const enabled = runtime?.enabled === true;
   const supportsWebhookIngress = enabled && isFeishuWebhookTransport(runtime?.transport);
 
   return {
     platformId: "feishu",
+    ...(botId ? { botId } : {}),
+    instanceKey,
     enabled,
     capabilities: {
       supportsPlainMessages: true,
@@ -19,13 +23,19 @@ export function createFeishuPlatform(deps) {
       supportsWebhookIngress
     },
     canHandleRouteId(routeId) {
-      return isFeishuRouteId(routeId);
+      const normalizedRouteId = String(routeId ?? "").trim();
+      return isFeishuRouteId(normalizedRouteId) || isRawFeishuChatId(normalizedRouteId);
     },
     async fetchChannelByRouteId(routeId) {
-      if (!enabled || !isFeishuRouteId(routeId)) {
+      if (!enabled) {
         return null;
       }
-      return await runtime.fetchChannelByRouteId(routeId);
+      const normalizedRouteId = String(routeId ?? "").trim();
+      const targetRouteId = parseFeishuRouteId(normalizedRouteId) ?? normalizedRouteId;
+      if (!targetRouteId) {
+        return null;
+      }
+      return await runtime.fetchChannelByRouteId(targetRouteId);
     },
     getHttpEndpoints() {
       if (!supportsWebhookIngress || !runtime?.webhookPath) {
@@ -43,13 +53,26 @@ export function createFeishuPlatform(deps) {
       const summary = (await runtime?.start?.()) ?? {};
       return {
         platformId: "feishu",
+        ...(botId ? { botId } : {}),
+        instanceKey,
         started: enabled,
         transport: runtime?.transport ?? null,
         ...summary
       };
     },
     async stop() {
-      return await runtime?.stop?.();
+      const summary = (await runtime?.stop?.()) ?? {};
+      return {
+        platformId: "feishu",
+        ...(botId ? { botId } : {}),
+        instanceKey,
+        ...summary
+      };
     }
   };
+}
+
+function isRawFeishuChatId(routeId) {
+  const normalizedRouteId = String(routeId ?? "").trim();
+  return normalizedRouteId.startsWith("oc_");
 }

@@ -38,6 +38,15 @@ describe("slash commands", () => {
     ]);
   });
 
+  test("uses runtime-session wording in operator-facing descriptions", () => {
+    const payloads = buildSlashCommandPayloads();
+    const ask = payloads.find((payload) => payload.name === "ask");
+    const newCommand = payloads.find((payload) => payload.name === "new");
+
+    expect(ask?.description).toBe("Send a prompt into the current runtime session");
+    expect(newCommand?.description).toBe("Clear the current session binding for this channel");
+  });
+
   test("maps slash interactions back to the existing !command text", () => {
     expect(buildCommandTextFromInteraction({ commandName: "status", options: createOptions() })).toBe("!status");
     expect(buildCommandTextFromInteraction({ commandName: "ask", options: createOptions({ prompt: "ship it" }) })).toBe(

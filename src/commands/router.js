@@ -2,6 +2,7 @@ import { getActiveAgentId, setupSupportsImageInput } from "../agents/setupResolu
 
 export function createCommandRouter(deps) {
   const {
+    bot,
     ChannelType,
     isGeneralChannel,
     fs,
@@ -29,6 +30,7 @@ export function createCommandRouter(deps) {
     safeReply,
     getChannelSetups,
     setChannelSetups,
+    bootstrapManagedRoutes,
     getPlatformRegistry,
     getOutputBufferSnapshot = () => []
   } = deps;
@@ -78,23 +80,27 @@ export function createCommandRouter(deps) {
     }
 
     if (command === "!status") {
-      const queue = getQueue(context.repoChannelId);
-      const binding = state.getBinding(context.repoChannelId);
-      const codexThreadId = binding?.codexThreadId ?? null;
-      const activeTurn = findActiveTurnByRepoChannel(context.repoChannelId);
+      const repoChannelId = resolveRepoChannelId(message, context);
+      const queue = getQueue(repoChannelId);
+      const binding = state.getBinding(repoChannelId);
+      const sessionId = binding?.codexThreadId ?? null;
+      const activeTurn = findActiveTurnByRepoChannel(repoChannelId);
       const sandboxMode = context.setup.sandboxMode ?? config.sandboxMode;
       const modeLabel = describeContextMode(context.setup);
       const fileWrites = context.setup.allowFileWrites === false ? "disabled" : "enabled";
+      const runtime = resolveRuntime(context);
       await safeReply(
         message,
         [
+          ...(context?.bot?.botId ? [`bot: \`${context.bot.botId}\``] : []),
+          `runtime: \`${runtime}\``,
           `cwd: \`${context.setup.cwd}\``,
           `model: \`${context.setup.resolvedModel ?? context.setup.model ?? config.defaultModel}\`${context.setup.model ? " (channel override)" : " (default)"}`,
           `mode: ${modeLabel}`,
           `approval policy: \`${config.approvalPolicy}\``,
           `sandbox mode: \`${sandboxMode}\``,
           `file writes: ${fileWrites}`,
-          `codex thread: ${codexThreadId ? `\`${codexThreadId}\`` : "none"}`,
+          `session: ${sessionId ? `\`${sessionId}\`` : "none"}`,
           `queue depth: ${queue.jobs.length}`,
           `active turn: ${activeTurn ? "yes" : "no"}`
         ].join("\n")
@@ -143,9 +149,10 @@ export function createCommandRouter(deps) {
     }
 
     if (command === "!new") {
-      state.clearBinding(context.repoChannelId);
+      const repoChannelId = resolveRepoChannelId(message, context);
+      state.clearBinding(repoChannelId);
       await state.save();
-      await safeReply(message, "Cleared Codex thread binding for this channel. Next prompt starts a new Codex thread.");
+      await safeReply(message, "Cleared the current session binding for this chat. Next prompt starts a new session.");
       return;
     }
 
@@ -155,13 +162,14 @@ export function createCommandRouter(deps) {
     }
 
     if (command === "!interrupt") {
-      const threadId = state.getBinding(context.repoChannelId)?.codexThreadId;
-      if (!threadId) {
-        await safeReply(message, "No Codex thread is bound to this channel yet.");
+      const repoChannelId = resolveRepoChannelId(message, context);
+      const sessionId = state.getBinding(repoChannelId)?.codexThreadId;
+      if (!sessionId) {
+        await safeReply(message, "No runtime session is bound to this chat yet.");
         return;
       }
       try {
-        await codex.request("turn/interrupt", { threadId });
+        await codex.request("turn/interrupt", { threadId: sessionId });
         await safeReply(message, "Interrupt requested.");
       } catch (error) {
         await safeReply(message, `Interrupt failed: ${error.message}`);
@@ -170,11 +178,15 @@ export function createCommandRouter(deps) {
     }
 
     if (command === "!where") {
-      const threadId = state.getBinding(context.repoChannelId)?.codexThreadId;
+      const repoChannelId = resolveRepoChannelId(message, context);
+      const sessionId = state.getBinding(repoChannelId)?.codexThreadId;
       const sandboxMode = context.setup.sandboxMode ?? config.sandboxMode;
       const modeLabel = describeContextMode(context.setup);
       const fileWrites = context.setup.allowFileWrites === false ? "disabled" : "enabled";
+      const runtime = resolveRuntime(context);
       const lines = [
+        ...(context?.bot?.botId ? [`bot: \`${context.bot.botId}\``] : []),
+        `runtime: \`${runtime}\``,
         `codex bin: \`${codexBin}\``,
         `CODEX_HOME: \`${codexHomeEnv ?? "(unset; codex default path)"}\``,
         `state file: \`${statePath}\``,
@@ -182,11 +194,11 @@ export function createCommandRouter(deps) {
         `channel mode: \`${modeLabel}\``,
         `channel cwd: \`${context.setup.cwd}\``,
         `channel model: \`${context.setup.resolvedModel ?? context.setup.model ?? config.defaultModel}\`${context.setup.model ? " (channel override)" : " (default)"}`,
-        `repo channel: \`${context.repoChannelId}\``,
+        `repo channel: \`${repoChannelId}\``,
         `approval policy: \`${config.approvalPolicy}\``,
         `sandbox mode: \`${sandboxMode}\``,
         `file writes: \`${fileWrites}\``,
-        `codex thread: ${threadId ? `\`${threadId}\`` : "none"}`
+        `session: ${sessionId ? `\`${sessionId}\`` : "none"}`
       ];
       await safeReply(message, lines.join("\n"));
       return;
@@ -373,7 +385,7 @@ export function createCommandRouter(deps) {
       const effectiveCommand = isQuickApprove ? "!approve" : isQuickDecline ? "!decline" : command;
 
       if (!token) {
-        token = findLatestPendingApprovalTokenForChannel(message.channelId);
+        token = findLatestPendingApprovalTokenForChannel(resolveRepoChannelId(message, context));
         if (!token) {
           const actionHint = isQuickApprove || isQuickDecline
             ? `No pending approvals. Use \`!approve <id>\` or \`!decline <id>\` when an approval is pending.`
@@ -387,7 +399,7 @@ export function createCommandRouter(deps) {
         await safeReply(message, `No pending approval with id \`${token}\`.`);
         return;
       }
-      if (approval.repoChannelId !== message.channelId) {
+      if (approval.repoChannelId !== resolveRepoChannelId(message, context)) {
         await safeReply(message, "That approval belongs to a different channel.");
         return;
       }
@@ -414,15 +426,22 @@ export function createCommandRouter(deps) {
 
   async function runManagedRouteCommand(message, options = {}) {
     const { forceRebuild = false } = options;
-    const registry = resolvePlatformRegistry();
-    if (!registry?.anyPlatformSupports?.("supportsAutoDiscovery")) {
+    if (isDiscordBotFixedToNonCodexRuntime(bot)) {
+      await safeReply(message, "Managed route sync is only available on Discord bots fixed to `codex`.");
+      return;
+    }
+
+    const canBootstrapManagedRoutes =
+      typeof bootstrapManagedRoutes === "function" ||
+      resolvePlatformRegistry()?.anyPlatformSupports?.("supportsAutoDiscovery");
+    if (!canBootstrapManagedRoutes) {
       await safeReply(message, "No configured platform currently supports managed route sync.");
       return;
     }
 
     try {
-      const summaries = await registry.bootstrapRoutes({ forceRebuild });
-      const primary = summaries.find((summary) => summary?.platformId === "discord") ?? summaries[0] ?? null;
+      const summaries = await runBootstrapManagedRoutes({ forceRebuild });
+      const primary = summaries.find((summary) => summary?.platformId === "discord") ?? summaries[0] ?? summaries ?? null;
       if (!primary) {
         await safeReply(message, "No managed route changes were needed.");
         return;
@@ -440,8 +459,8 @@ export function createCommandRouter(deps) {
     const capabilities = registry?.getCapabilities?.(platformId) ?? {};
     const supportsSlashCommands = capabilities.supportsSlashCommands === true;
     const supportsButtons = capabilities.supportsButtons === true;
-    const supportsRepoBootstrap = capabilities.supportsRepoBootstrap === true;
-    const supportsAutoDiscovery = registry?.anyPlatformSupports?.("supportsAutoDiscovery") ?? platformId === "discord";
+    const supportsRepoBootstrap = resolveSupportsRepoBootstrap(platformId, capabilities);
+    const supportsAutoDiscovery = resolveSupportsAutoDiscovery(platformId, registry);
     const isDiscordPlatform = platformId === "discord";
 
     const lines = [
@@ -468,10 +487,10 @@ export function createCommandRouter(deps) {
     lines.push(`\`${prefix}setpath <abs-path>\` bind this chat to an existing repo path`);
     lines.push(`\`${prefix}agents\` show configured agents and current selection`);
     lines.push(`\`${prefix}ask <prompt>\` send prompt in this repo channel`);
-    lines.push(`\`${prefix}status\` show queue/thread status for this channel`);
+    lines.push(`\`${prefix}status\` show queue/session status for this channel`);
     lines.push(`\`${prefix}screen\` show recent terminal output (last 60 lines)`);
     lines.push(`\`${prefix}log [n]\` show last n lines of output (default 20, max 200)`);
-    lines.push(`\`${prefix}new\` reset Codex thread binding for this channel`);
+    lines.push(`\`${prefix}new\` reset the current session binding for this channel`);
     lines.push(`\`${prefix}restart [reason]\` request host-managed restart and confirm when back`);
     lines.push(`\`${prefix}interrupt\` interrupt current turn in this channel`);
     lines.push(`\`${prefix}where\` show bot runtime paths and binding details`);
@@ -487,7 +506,7 @@ export function createCommandRouter(deps) {
     if (supportsButtons) {
       lines.push("Tip: use the Approve/Decline/Cancel buttons on approval messages");
     }
-    lines.push("Model: one chat route = one persistent Codex thread");
+    lines.push("Model: one chat route = one persistent runtime session");
     lines.push("Also supported in #general-style chats: plain chat and commands (read-only, no file writes)");
 
     if (!supportsRepoBootstrap && platformId === "feishu") {
@@ -524,8 +543,57 @@ export function createCommandRouter(deps) {
     return typeof getPlatformRegistry === "function" ? getPlatformRegistry() : null;
   }
 
+  async function runBootstrapManagedRoutes(options) {
+    if (typeof bootstrapManagedRoutes === "function") {
+      const summary = await bootstrapManagedRoutes(options);
+      return Array.isArray(summary) ? summary : summary ? [summary] : [];
+    }
+    const registry = resolvePlatformRegistry();
+    return await registry.bootstrapRoutes(options);
+  }
+
+  function resolveSupportsRepoBootstrap(platformId, capabilities) {
+    const platformSupportsRepoBootstrap = capabilities.supportsRepoBootstrap === true;
+    if (platformId !== "discord") {
+      return platformSupportsRepoBootstrap;
+    }
+    if (!bot) {
+      return platformSupportsRepoBootstrap;
+    }
+    return platformSupportsRepoBootstrap && !isDiscordBotFixedToNonCodexRuntime(bot);
+  }
+
+  function resolveSupportsAutoDiscovery(platformId, registry) {
+    if (platformId !== "discord") {
+      return registry?.anyPlatformSupports?.("supportsAutoDiscovery") ?? false;
+    }
+    if (isDiscordBotFixedToNonCodexRuntime(bot)) {
+      return false;
+    }
+    if (typeof bootstrapManagedRoutes === "function") {
+      return true;
+    }
+    return registry?.anyPlatformSupports?.("supportsAutoDiscovery") ?? true;
+  }
+
   function inferPlatformId(message) {
     return String(message?.platform ?? "discord").trim().toLowerCase() || "discord";
+  }
+
+  function resolveRepoChannelId(message, context = null) {
+    const scopedRouteId = String(context?.repoChannelId ?? "").trim();
+    if (scopedRouteId) {
+      return scopedRouteId;
+    }
+    return String(message?.channelId ?? "").trim();
+  }
+
+  function resolveRuntime(context = null) {
+    const contextRuntime = String(context?.setup?.runtime ?? context?.bot?.runtime ?? bot?.runtime ?? "").trim().toLowerCase();
+    if (contextRuntime === "claude" || contextRuntime === "codex") {
+      return contextRuntime;
+    }
+    return config.runtime || "codex";
   }
 
   function truncateForDisplay(text, maxLen) {
@@ -913,6 +981,12 @@ const DISCORD_ONLY_COMMANDS = new Set([
   "setagent",
   "clearagent"
 ]);
+
+function isDiscordBotFixedToNonCodexRuntime(bot) {
+  const platform = String(bot?.platform ?? "discord").trim().toLowerCase();
+  const runtime = String(bot?.runtime ?? "").trim().toLowerCase();
+  return platform === "discord" && runtime.length > 0 && runtime !== "codex";
+}
 
 function upsertTopicTag(topic, prefix, value) {
   const safeValue = String(value ?? "").trim();

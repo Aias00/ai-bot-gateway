@@ -168,6 +168,42 @@ describe("discord runtime slash commands", () => {
     expect(replies).toEqual(["handled !status"]);
   });
 
+  test("passes bot identity into repo-context resolution", async () => {
+    const seenOptions: Array<Record<string, unknown>> = [];
+    const { runtime } = createRuntime({
+      bot: {
+        botId: "discord-review",
+        runtime: "claude"
+      },
+      resolveRepoContext: (_message: { channelId: string }, options: Record<string, unknown>) => {
+        seenOptions.push(options);
+        return {
+          repoChannelId: "bot:discord-review:route:channel-1",
+          bot: {
+            botId: "discord-review",
+            runtime: "claude"
+          },
+          setup: {
+            cwd: "/tmp/review-repo",
+            mode: "repo",
+            runtime: "claude",
+            sandboxMode: "workspace-write",
+            allowFileWrites: true
+          }
+        };
+      }
+    });
+    const { interaction } = createInteraction("status");
+
+    await runtime.handleInteraction(interaction);
+
+    expect(seenOptions).toHaveLength(1);
+    expect(seenOptions[0]?.bot).toEqual({
+      botId: "discord-review",
+      runtime: "claude"
+    });
+  });
+
   test("handles /resync before repo context lookup", async () => {
     const { runtime, calls } = createRuntime({
       resolveRepoContext: () => null

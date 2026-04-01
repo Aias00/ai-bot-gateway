@@ -4,6 +4,7 @@ import { buildNotificationRuntime } from "./buildNotificationRuntime.js";
 import { buildApprovalRuntime } from "./buildApprovalRuntime.js";
 import { createPlatformRegistry } from "../platforms/platformRegistry.js";
 import { DISCORD_CHANNEL_TYPES, DISCORD_MESSAGE_FLAGS } from "../discord/constants.js";
+import { createDiscordClient } from "../discord/createDiscordClient.js";
 
 export async function buildBridgeRuntimes(deps) {
   const {
@@ -83,43 +84,33 @@ export async function buildBridgeRuntimes(deps) {
 
   let platformRegistry = null;
   const getPlatformRegistry = () => platformRegistry;
-
-  const {
-    bootstrapChannelMappings,
-    getHelpText,
-    isCommandSupportedForPlatform,
-    runManagedRouteCommand,
-    handleCommand,
-    handleInitRepoCommand,
-    handleSetPathCommand,
-    handleMakeChannelCommand,
-    handleBindCommand,
-    handleUnbindCommand
-  } = buildCommandRuntime({
-    ChannelType: DISCORD_CHANNEL_TYPES,
-    path,
-    fs,
-    execFileAsync,
-    discord,
-    codex,
-    config,
-    state,
-    pendingApprovals,
-    projectsCategoryName,
-    repoRootPath,
-    managedThreadTopicPrefix,
-    managedChannelTopicPrefix,
-    codexBin,
-    codexHomeEnv,
-    statePath,
-    configPath,
-    isDiscordMissingPermissionsError,
-    getChannelSetups,
-    setChannelSetups,
-    runtimeAdapters,
-    safeReply,
-    getPlatformRegistry
-  });
+  const buildScopedCommandRuntime = (bot, discordClient = null) =>
+    buildCommandRuntime({
+      bot,
+      ChannelType: DISCORD_CHANNEL_TYPES,
+      path,
+      fs,
+      execFileAsync,
+      discord: discordClient,
+      codex,
+      config,
+      state,
+      pendingApprovals,
+      projectsCategoryName,
+      repoRootPath,
+      managedThreadTopicPrefix,
+      managedChannelTopicPrefix,
+      codexBin,
+      codexHomeEnv,
+      statePath,
+      configPath,
+      isDiscordMissingPermissionsError,
+      getChannelSetups,
+      setChannelSetups,
+      runtimeAdapters,
+      safeReply,
+      getPlatformRegistry
+    });
 
   const notificationRuntime = buildNotificationRuntime({
     activeTurns,
@@ -166,21 +157,79 @@ export async function buildBridgeRuntimes(deps) {
 
   let discordRuntime = createDisabledDiscordRuntime();
   let feishuRuntime = createDisabledFeishuRuntime({ feishuTransport, feishuWebhookPath });
+  let primaryBootstrapChannelMappings = async () => null;
   const platforms = [];
-
-  if (discordToken) {
-    const [{ buildDiscordRuntime }, { createDiscordPlatform }] = await Promise.all([
+  const configuredBots = listConfiguredBots(config);
+  const botsForStartup =
+    configuredBots.length > 0
+      ? configuredBots
+      : [
+          ...(discordToken
+            ? [
+                {
+                  botId: "discord",
+                  platform: "discord",
+                  runtime: config?.runtime ?? "codex",
+                  auth: { token: discordToken },
+                  settings: {}
+                }
+              ]
+            : []),
+          ...(feishuEnabled
+            ? [
+                {
+                  botId: "feishu",
+                  platform: "feishu",
+                  runtime: config?.runtime ?? "codex",
+                  auth: {
+                    appId: feishuAppId,
+                    appSecret: feishuAppSecret,
+                    verificationToken: feishuVerificationToken
+                  },
+                  settings: {
+                    transport: feishuTransport,
+                    webhookPath: feishuWebhookPath,
+                    generalChatId: feishuGeneralChatId,
+                    generalCwd: feishuGeneralCwd
+                  }
+                }
+              ]
+            : [])
+        ];
+  const [{ buildDiscordRuntime }, { createDiscordPlatform }, { buildFeishuRuntime }, { createFeishuPlatform }] =
+    await Promise.all([
       import("./buildDiscordRuntime.js"),
-      import("../platforms/discordPlatform.js")
+      import("../platforms/discordPlatform.js"),
+      import("./buildFeishuRuntime.js"),
+      import("../platforms/feishuPlatform.js")
     ]);
-    discordRuntime = buildDiscordRuntime({
+
+  let primaryDiscordAssigned = false;
+  let discordRuntimeAssigned = false;
+  for (const bot of botsForStartup.filter((entry) => entry.platform === "discord" && String(entry.auth?.token ?? "").trim())) {
+    const discordClient = primaryDiscordAssigned ? await createDiscordClient() : discord;
+    primaryDiscordAssigned = true;
+    const {
+      bootstrapChannelMappings,
+      getHelpText,
+      isCommandSupportedForPlatform,
+      runManagedRouteCommand,
+      handleCommand,
+      handleInitRepoCommand,
+      handleSetPathCommand,
+      handleMakeChannelCommand,
+      handleBindCommand,
+      handleUnbindCommand
+    } = buildScopedCommandRuntime(bot, discordClient);
+    const nextDiscordRuntime = buildDiscordRuntime({
+      bot,
       ChannelType: DISCORD_CHANNEL_TYPES,
       MessageFlags: DISCORD_MESSAGE_FLAGS,
-      discord,
+      discord: discordClient,
       config,
-      generalChannelId,
+      generalChannelId: String(bot.settings?.generalChannelId ?? "").trim() || generalChannelId,
       generalChannelName,
-      generalChannelCwd,
+      generalChannelCwd: String(bot.settings?.generalCwd ?? "").trim() || generalChannelCwd,
       getChannelSetups,
       projectsCategoryName,
       managedChannelTopicPrefix,
@@ -198,25 +247,35 @@ export async function buildBridgeRuntimes(deps) {
       pendingApprovals,
       safeReply
     });
+    if (!discordRuntimeAssigned) {
+      discordRuntime = nextDiscordRuntime;
+      discordRuntimeAssigned = true;
+      primaryBootstrapChannelMappings = bootstrapChannelMappings ?? primaryBootstrapChannelMappings;
+    }
     platforms.push(
       createDiscordPlatform({
-        discord,
-        discordToken,
+        bot,
+        discord: discordClient,
+        discordToken: bot.auth.token,
         waitForDiscordReady,
-        runtime: discordRuntime,
+        runtime: nextDiscordRuntime,
         bootstrapChannelMappings
       })
     );
   }
 
-  if (feishuEnabled) {
-    const [{ buildFeishuRuntime }, { createFeishuPlatform }] = await Promise.all([
-      import("./buildFeishuRuntime.js"),
-      import("../platforms/feishuPlatform.js")
-    ]);
-    feishuRuntime = buildFeishuRuntime({
+  for (const bot of botsForStartup.filter((entry) => entry.platform === "feishu")) {
+    const {
+      getHelpText,
+      isCommandSupportedForPlatform,
+      runManagedRouteCommand,
+      handleCommand,
+      handleSetPathCommand
+    } = buildScopedCommandRuntime(bot);
+    const nextFeishuRuntime = buildFeishuRuntime({
+      bot,
       config,
-      runtimeEnv: {
+      runtimeEnv: buildBotRuntimeEnv(runtimeEnv, bot, {
         feishuEnabled,
         feishuAppId,
         feishuAppSecret,
@@ -235,9 +294,8 @@ export async function buildBridgeRuntimes(deps) {
         feishuStreamMinChars,
         feishuEventDedupeTtlMs,
         feishuEventDedupePath
-      },
+      }),
       getChannelSetups,
-      bootstrapChannelMappings,
       runManagedRouteCommand,
       getHelpText,
       isCommandSupportedForPlatform,
@@ -246,9 +304,13 @@ export async function buildBridgeRuntimes(deps) {
       runtimeAdapters,
       safeReply
     });
+    if (!feishuRuntime.enabled) {
+      feishuRuntime = nextFeishuRuntime;
+    }
     platforms.push(
       createFeishuPlatform({
-        runtime: feishuRuntime
+        bot,
+        runtime: nextFeishuRuntime
       })
     );
   }
@@ -267,7 +329,7 @@ export async function buildBridgeRuntimes(deps) {
   });
 
   return {
-    bootstrapChannelMappings,
+    bootstrapChannelMappings: primaryBootstrapChannelMappings,
     registerSlashCommands: discordRuntime.registerSlashCommands,
     backendRuntime,
     platformRegistry,
@@ -275,6 +337,29 @@ export async function buildBridgeRuntimes(deps) {
     notificationRuntime,
     serverRequestRuntime,
     discordRuntime
+  };
+}
+
+function listConfiguredBots(config) {
+  return Object.entries(config?.bots ?? {}).map(([botId, bot]) => ({
+    botId,
+    ...(bot && typeof bot === "object" ? bot : {})
+  }));
+}
+
+function buildBotRuntimeEnv(runtimeEnv, bot, fallback) {
+  return {
+    ...runtimeEnv,
+    ...fallback,
+    feishuEnabled: true,
+    feishuAppId: String(bot?.auth?.appId ?? "").trim() || fallback.feishuAppId,
+    feishuAppSecret: String(bot?.auth?.appSecret ?? "").trim() || fallback.feishuAppSecret,
+    feishuVerificationToken:
+      String(bot?.auth?.verificationToken ?? "").trim() || fallback.feishuVerificationToken,
+    feishuTransport: String(bot?.settings?.transport ?? "").trim() || fallback.feishuTransport,
+    feishuWebhookPath: String(bot?.settings?.webhookPath ?? "").trim() || fallback.feishuWebhookPath,
+    feishuGeneralChatId: String(bot?.settings?.generalChatId ?? "").trim() || fallback.feishuGeneralChatId,
+    feishuGeneralCwd: String(bot?.settings?.generalCwd ?? "").trim() || fallback.feishuGeneralCwd
   };
 }
 

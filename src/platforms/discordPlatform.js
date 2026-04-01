@@ -1,5 +1,6 @@
 export function createDiscordPlatform(deps) {
   const {
+    bot,
     discord,
     discordToken,
     waitForDiscordReady,
@@ -7,6 +8,8 @@ export function createDiscordPlatform(deps) {
     bootstrapChannelMappings,
     startTimeoutMs = 10_000
   } = deps;
+  const botId = String(bot?.botId ?? "").trim();
+  const instanceKey = botId || "discord";
   const enabled = Boolean(discordToken);
   let startAttempted = false;
   let started = false;
@@ -26,6 +29,8 @@ export function createDiscordPlatform(deps) {
 
   return {
     platformId: "discord",
+    ...(botId ? { botId } : {}),
+    instanceKey,
     enabled,
     capabilities: {
       supportsPlainMessages: true,
@@ -62,6 +67,8 @@ export function createDiscordPlatform(deps) {
       if (!enabled) {
         return {
           platformId: "discord",
+          ...(botId ? { botId } : {}),
+          instanceKey,
           started: false,
           commandRegistration: null,
           commandRegistrationError: null
@@ -96,6 +103,8 @@ export function createDiscordPlatform(deps) {
 
         return {
           platformId: "discord",
+          ...(botId ? { botId } : {}),
+          instanceKey,
           started: true,
           commandRegistration,
           commandRegistrationError
@@ -106,6 +115,8 @@ export function createDiscordPlatform(deps) {
         resetClient();
         return {
           platformId: "discord",
+          ...(botId ? { botId } : {}),
+          instanceKey,
           started: false,
           startError: error,
           commandRegistration: null,
@@ -121,11 +132,11 @@ export function createDiscordPlatform(deps) {
     },
     async stop() {
       if (!startAttempted) {
-        return { platformId: "discord", stopped: false };
+        return { platformId: "discord", ...(botId ? { botId } : {}), instanceKey, stopped: false };
       }
       started = false;
       resetClient();
-      return { platformId: "discord", stopped: true };
+      return { platformId: "discord", ...(botId ? { botId } : {}), instanceKey, stopped: true };
     }
   };
 }

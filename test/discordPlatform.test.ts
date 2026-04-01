@@ -111,17 +111,21 @@ describe("discord platform", () => {
 
     const summary = await platform.start();
 
-    expect(summary).toEqual({
-      platformId: "discord",
-      started: true,
-      commandRegistration: { scope: "guild", count: 1, guildId: "g1" },
-      commandRegistrationError: null
-    });
+    expect(summary).toEqual(
+      expect.objectContaining({
+        platformId: "discord",
+        started: true,
+        commandRegistration: { scope: "guild", count: 1, guildId: "g1" },
+        commandRegistrationError: null
+      })
+    );
     expect(await platform.fetchChannelByRouteId("123")).toEqual({ id: "123" });
     await platform.handleInboundMessage({ id: "m1" });
     await platform.handleInboundInteraction({ id: "i1" });
     expect(await platform.bootstrapRoutes()).toEqual({ discoveredCwds: 2 });
-    expect(await platform.stop()).toEqual({ platformId: "discord", stopped: true });
+    expect(await platform.stop()).toEqual(
+      expect.objectContaining({ platformId: "discord", stopped: true })
+    );
     expect(calls).toEqual([
       "login:token",
       "application.fetch",

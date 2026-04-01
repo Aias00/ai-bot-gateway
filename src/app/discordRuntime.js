@@ -3,6 +3,7 @@ import { getActiveAgentId, setupSupportsImageInput } from "../agents/setupResolu
 
 export function createDiscordRuntime(deps) {
   const {
+    bot,
     ChannelType,
     discord,
     config,
@@ -72,6 +73,7 @@ export function createDiscordRuntime(deps) {
     const context = resolveRepoContext(message, {
       channelSetups: getChannelSetups(),
       config,
+      bot,
       generalChannel: {
         id: generalChannelId,
         name: generalChannelName,
@@ -220,6 +222,7 @@ export function createDiscordRuntime(deps) {
     const context = resolveRepoContext(message, {
       channelSetups: getChannelSetups(),
       config,
+      bot,
       generalChannel: {
         id: generalChannelId,
         name: generalChannelName,

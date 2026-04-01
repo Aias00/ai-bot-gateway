@@ -1,8 +1,10 @@
 import { resolveDiscordGuild } from "./resolveGuild.js";
 import { isMissingRolloutPathError } from "../app/runtimeUtils.js";
+import { parseScopedRouteId } from "../bots/scopedRoutes.js";
 
 export function createBootstrapService(deps) {
   const {
+    bot,
     ChannelType,
     path,
     discord,
@@ -16,6 +18,7 @@ export function createBootstrapService(deps) {
     getChannelSetups,
     setChannelSetups
   } = deps;
+  const currentBotId = String(bot?.botId ?? "").trim();
 
   async function bootstrapChannelMappings(options = {}) {
     const forceRebuild = options.forceRebuild === true;
@@ -157,7 +160,7 @@ export function createBootstrapService(deps) {
 
     const snapshot = state.snapshot();
     const bindings = snapshot?.threadBindings ?? {};
-    const discordBindingIds = Object.keys(bindings).filter((repoChannelId) => !isExternalRouteId(repoChannelId));
+    const discordBindingIds = Object.keys(bindings).filter((repoChannelId) => isCurrentDiscordBindingRouteId(repoChannelId));
     const clearedBindings = discordBindingIds.length;
     if (clearedBindings > 0) {
       for (const repoChannelId of discordBindingIds) {
@@ -355,15 +358,17 @@ export function createBootstrapService(deps) {
     const setups = getChannelSetups();
 
     for (const [repoChannelId, binding] of Object.entries(bindings)) {
-      if (isExternalRouteId(repoChannelId)) {
+      const externalRouteId = resolveDiscordExternalRouteId(repoChannelId);
+      if (!externalRouteId) {
         continue;
       }
-      const channel = guild.channels.cache.get(repoChannelId);
+      const channel = guild.channels.cache.get(externalRouteId);
+      const setup = setups[repoChannelId] ?? setups[externalRouteId];
       const valid =
         !!channel &&
         channel.type === ChannelType.GuildText &&
-        !!setups[repoChannelId] &&
-        (!binding?.cwd || binding.cwd === setups[repoChannelId].cwd);
+        !!setup &&
+        (!binding?.cwd || binding.cwd === setup.cwd);
 
       if (!valid) {
         state.clearBinding(repoChannelId);
@@ -408,6 +413,22 @@ export function createBootstrapService(deps) {
 
   function isExternalRouteId(routeId) {
     return String(routeId ?? "").includes(":");
+  }
+
+  function isCurrentDiscordBindingRouteId(routeId) {
+    const scopedRoute = parseScopedRouteId(routeId);
+    if (scopedRoute) {
+      return scopedRoute.botId === currentBotId;
+    }
+    return !isExternalRouteId(routeId);
+  }
+
+  function resolveDiscordExternalRouteId(routeId) {
+    const scopedRoute = parseScopedRouteId(routeId);
+    if (scopedRoute) {
+      return scopedRoute.botId === currentBotId ? scopedRoute.externalRouteId : null;
+    }
+    return isExternalRouteId(routeId) ? null : String(routeId ?? "").trim();
   }
 
   function isLegacyProjectCategoryName(categoryNameLower, legacyBaseNames) {

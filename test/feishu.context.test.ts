@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { resolveFeishuContext } from "../src/feishu/context.js";
 import { makeFeishuRouteId } from "../src/feishu/ids.js";
+import { makeScopedRouteId } from "../src/bots/scopedRoutes.js";
 
 describe("feishu context", () => {
   test("resolves mapped repo chat as writable context", () => {
@@ -137,5 +138,51 @@ describe("feishu context", () => {
 
     expect(context?.setup.model).toBeUndefined();
     expect(context?.setup.resolvedModel).toBe("gpt-5.4-codex");
+  });
+
+  test("resolves configured bot-local Feishu routes to scoped route ids", () => {
+    const routeId = makeFeishuRouteId("oc_repo_support_1");
+    const context = resolveFeishuContext(
+      {
+        channelId: routeId
+      },
+      {
+        channelSetups: {},
+        config: {
+          defaultModel: "gpt-5.3-codex",
+          sandboxMode: "workspace-write"
+        },
+        generalChat: {
+          id: "oc_general",
+          cwd: "/tmp/general"
+        },
+        bot: {
+          botId: "feishu-support",
+          runtime: "claude",
+          routes: {
+            oc_repo_support_1: {
+              cwd: "/tmp/feishu-support-repo"
+            }
+          }
+        }
+      }
+    );
+
+    expect(context).toEqual({
+      repoChannelId: makeScopedRouteId("feishu-support", "oc_repo_support_1"),
+      bot: {
+        botId: "feishu-support",
+        runtime: "claude"
+      },
+      setup: {
+        cwd: "/tmp/feishu-support-repo",
+        resolvedModel: "gpt-5.3-codex",
+        runtime: "claude",
+        bindingKind: "repo",
+        mode: "repo",
+        sandboxMode: "workspace-write",
+        allowFileWrites: true
+      }
+    });
   });
 });

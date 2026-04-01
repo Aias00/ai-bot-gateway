@@ -1,14 +1,18 @@
-import { makeFeishuRouteId } from "./ids.js";
+import { makeFeishuRouteId, parseFeishuRouteId } from "./ids.js";
 import { resolveSetupAgentAndModel } from "../agents/setupResolution.js";
+import { makeScopedRouteId } from "../bots/scopedRoutes.js";
 
 export function resolveFeishuContext(message, options) {
-  const { channelSetups, config, generalChat, unboundChat } = options;
+  const { channelSetups, config, generalChat, unboundChat, bot } = options;
   const routeId = String(message?.channelId ?? "").trim();
   if (!routeId) {
     return null;
   }
 
-  const setup = channelSetups[routeId];
+  const externalRouteId = parseFeishuRouteId(routeId) ?? routeId;
+  const scopedRouteId = resolveScopedRouteId(bot, externalRouteId, routeId);
+  const setup =
+    channelSetups[scopedRouteId] ?? channelSetups[routeId] ?? channelSetups[externalRouteId] ?? bot?.routes?.[externalRouteId];
   if (setup) {
     const resolvedRepo = resolveSetupAgentAndModel(setup, config);
     const normalizedSetupAgentId = String(setup?.agentId ?? "").trim();
@@ -22,11 +26,13 @@ export function resolveFeishuContext(message, options) {
       resolvedRepo.resolvedAgentId.length > 0;
 
     return {
-      repoChannelId: routeId,
+      repoChannelId: scopedRouteId,
+      ...(buildContextBot(bot) ? { bot: buildContextBot(bot) } : {}),
       setup: {
         ...setup,
         ...(shouldAttachResolvedModel ? { resolvedModel: resolvedRepo.resolvedModel } : {}),
         ...(shouldAttachResolvedAgent ? { resolvedAgentId: resolvedRepo.resolvedAgentId } : {}),
+        ...(typeof bot?.runtime === "string" ? { runtime: bot.runtime } : {}),
         bindingKind: "repo",
         mode: "repo",
         sandboxMode: config.sandboxMode,
@@ -38,13 +44,15 @@ export function resolveFeishuContext(message, options) {
   if (isFeishuGeneralChat(message, generalChat)) {
     const resolvedGeneral = resolveSetupAgentAndModel({}, config);
     return {
-      repoChannelId: routeId,
+      repoChannelId: scopedRouteId,
+      ...(buildContextBot(bot) ? { bot: buildContextBot(bot) } : {}),
       setup: {
         cwd: generalChat.cwd,
         resolvedModel: resolvedGeneral.resolvedModel ?? config.defaultModel,
         ...(typeof resolvedGeneral.resolvedAgentId === "string" && resolvedGeneral.resolvedAgentId.length > 0
           ? { resolvedAgentId: resolvedGeneral.resolvedAgentId }
           : {}),
+        ...(typeof bot?.runtime === "string" ? { runtime: bot.runtime } : {}),
         bindingKind: "general",
         mode: "general",
         sandboxMode: "read-only",
@@ -59,13 +67,15 @@ export function resolveFeishuContext(message, options) {
 
   const resolvedUnbound = resolveSetupAgentAndModel({}, config);
   return {
-    repoChannelId: routeId,
+    repoChannelId: scopedRouteId,
+    ...(buildContextBot(bot) ? { bot: buildContextBot(bot) } : {}),
     setup: {
       cwd: unboundChat?.cwd,
       resolvedModel: resolvedUnbound.resolvedModel ?? config.defaultModel,
       ...(typeof resolvedUnbound.resolvedAgentId === "string" && resolvedUnbound.resolvedAgentId.length > 0
         ? { resolvedAgentId: resolvedUnbound.resolvedAgentId }
         : {}),
+      ...(typeof bot?.runtime === "string" ? { runtime: bot.runtime } : {}),
       bindingKind: "unbound-open",
       mode: "repo",
       sandboxMode: config.sandboxMode,
@@ -86,4 +96,21 @@ export function isFeishuGeneralChat(messageOrChannel, generalChat) {
   }
 
   return routeId === makeFeishuRouteId(generalChatId) || routeId === generalChatId;
+}
+
+function resolveScopedRouteId(bot, externalRouteId, fallbackRouteId) {
+  const scopedRouteId = makeScopedRouteId(bot?.botId, externalRouteId);
+  return scopedRouteId || String(fallbackRouteId ?? "").trim();
+}
+
+function buildContextBot(bot) {
+  const botId = String(bot?.botId ?? "").trim();
+  const runtime = String(bot?.runtime ?? "").trim();
+  if (!botId && !runtime) {
+    return null;
+  }
+  return {
+    ...(botId ? { botId } : {}),
+    ...(runtime ? { runtime } : {})
+  };
 }

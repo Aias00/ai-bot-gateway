@@ -6,12 +6,12 @@ export function buildSlashCommandPayloads() {
     new SlashCommandBuilder().setName("help").setDescription("Show bridge commands and usage notes"),
     new SlashCommandBuilder()
       .setName("ask")
-      .setDescription("Send a prompt into the current Codex thread")
+      .setDescription("Send a prompt into the current runtime session")
       .addStringOption((option) =>
         option.setName("prompt").setDescription("Prompt text to send").setRequired(true)
       ),
-    new SlashCommandBuilder().setName("status").setDescription("Show queue, thread, and sandbox status for this channel"),
-    new SlashCommandBuilder().setName("new").setDescription("Clear the current Codex thread binding for this channel"),
+    new SlashCommandBuilder().setName("status").setDescription("Show queue, session, and sandbox status for this channel"),
+    new SlashCommandBuilder().setName("new").setDescription("Clear the current session binding for this channel"),
     new SlashCommandBuilder()
       .setName("restart")
       .setDescription("Request a host-managed bridge restart")

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ChannelType } from "discord.js";
 import { isGeneralChannel, resolveRepoContext } from "../src/channels/context.js";
+import { makeScopedRouteId } from "../src/bots/scopedRoutes.js";
 
 describe("channels context", () => {
   test("treats configured #general as read-only context", () => {
@@ -86,5 +87,45 @@ describe("channels context", () => {
 
     expect(context?.setup.model).toBeUndefined();
     expect(context?.setup.resolvedModel).toBe("gpt-5.4-codex");
+  });
+
+  test("resolves configured bot-local routes to scoped route ids", () => {
+    const context = resolveRepoContext(
+      {
+        channelId: "repo-2",
+        channel: { id: "repo-2", name: "review-repo", type: ChannelType.GuildText }
+      },
+      {
+        channelSetups: {},
+        config: { defaultModel: "gpt-5.3-codex", sandboxMode: "workspace-write" },
+        generalChannel: { id: "general-1", name: "general", cwd: "/tmp/general-cwd" },
+        bot: {
+          botId: "discord-review",
+          runtime: "claude",
+          routes: {
+            "repo-2": {
+              cwd: "/tmp/review-repo",
+              model: "claude-sonnet"
+            }
+          }
+        }
+      }
+    );
+
+    expect(context).toEqual({
+      repoChannelId: makeScopedRouteId("discord-review", "repo-2"),
+      bot: {
+        botId: "discord-review",
+        runtime: "claude"
+      },
+      setup: {
+        cwd: "/tmp/review-repo",
+        model: "claude-sonnet",
+        runtime: "claude",
+        mode: "repo",
+        sandboxMode: "workspace-write",
+        allowFileWrites: true
+      }
+    });
   });
 });

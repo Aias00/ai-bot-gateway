@@ -12,6 +12,7 @@ import { getActiveAgentId, setupSupportsImageInput } from "../agents/setupResolu
 
 export function createFeishuRuntime(deps) {
   const {
+    bot,
     config,
     runtimeEnv,
     getChannelSetups,
@@ -85,7 +86,8 @@ export function createFeishuRuntime(deps) {
   }
 
   async function fetchChannelByRouteId(routeId) {
-    const chatId = parseFeishuRouteId(routeId);
+    const normalizedRouteId = String(routeId ?? "").trim();
+    const chatId = parseFeishuRouteId(normalizedRouteId) ?? normalizedRouteId;
     if (!chatId) {
       return null;
     }
@@ -1432,6 +1434,7 @@ export function createFeishuRuntime(deps) {
     return {
       channelSetups: getChannelSetups(),
       config,
+      bot,
       generalChat: {
         id: feishuGeneralChatId,
         cwd: feishuGeneralCwd

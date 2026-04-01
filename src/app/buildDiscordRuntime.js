@@ -5,6 +5,7 @@ import { createDiscordRuntime } from "./discordRuntime.js";
 
 export function buildDiscordRuntime(deps) {
   const {
+    bot,
     ChannelType,
     MessageFlags,
     discord,
@@ -31,6 +32,7 @@ export function buildDiscordRuntime(deps) {
   } = deps;
 
   return createDiscordRuntime({
+    bot,
     ChannelType,
     discord,
     config,

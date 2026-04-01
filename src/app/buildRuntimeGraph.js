@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { EventEmitter } from "node:events";
 import { createAgentClientRegistry } from "../clients/agentClientRegistry.js";
 import {
   maybeSendAttachmentsForItem as maybeSendAttachmentsForItemFromService,
@@ -18,6 +17,7 @@ import { createTurnRecoveryStore } from "../turns/recoveryStore.js";
 import { statusLabelForItemType, truncateStatusText } from "../turns/turnFormatting.js";
 import { formatInputTextForSetup } from "./runtimeUtils.js";
 import { isFeishuRouteId } from "../feishu/ids.js";
+import { createDiscordClient, createDisabledDiscordClient } from "../discord/createDiscordClient.js";
 
 export async function buildRuntimeGraph(deps) {
   const { runtimeEnv, discordToken, execFileAsync, debugLog, discordMaxMessageLength, feishuMaxMessageLength, config, state } = deps;
@@ -161,24 +161,4 @@ export async function buildRuntimeGraph(deps) {
     turnRecoveryStore,
     createApprovalToken
   };
-}
-
-async function createDiscordClient() {
-  const { Client, GatewayIntentBits } = await import("discord.js");
-  return new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
-  });
-}
-
-function createDisabledDiscordClient() {
-  const client = new EventEmitter();
-  client.channels = {
-    fetch: async () => null
-  };
-  client.application = null;
-  client.user = null;
-  client.isReady = () => false;
-  client.login = async () => null;
-  client.destroy = () => {};
-  return client;
 }

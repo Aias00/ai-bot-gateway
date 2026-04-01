@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createBootstrapService } from "../src/channels/bootstrapService.js";
+import { makeScopedRouteId } from "../src/bots/scopedRoutes.js";
 
 describe("bootstrap service", () => {
   test("preserves external route setups and bindings during Discord sync", async () => {
@@ -172,6 +173,101 @@ describe("bootstrap service", () => {
       expect(warnCalls.some((line) => line.includes("skipping project discovery from codex because rollout path metadata is unavailable"))).toBe(true);
     } finally {
       console.warn = originalConsoleWarn;
+      if (typeof originalGuildId === "string") {
+        process.env.DISCORD_GUILD_ID = originalGuildId;
+      } else {
+        delete process.env.DISCORD_GUILD_ID;
+      }
+    }
+  });
+
+  test("prunes only scoped bindings owned by the current discord bot", async () => {
+    const originalGuildId = process.env.DISCORD_GUILD_ID;
+    process.env.DISCORD_GUILD_ID = "guild-1";
+    const clearedBindings: string[] = [];
+
+    const guild = {
+      id: "guild-1",
+      name: "test-guild",
+      channels: {
+        cache: new Map(),
+        async fetch() {},
+        async create(payload: { name: string; type: string }) {
+          const category = {
+            id: "cat-1",
+            name: payload.name,
+            type: payload.type
+          };
+          this.cache.set(category.id, category);
+          return category;
+        }
+      }
+    };
+
+    try {
+      const bootstrapService = createBootstrapService({
+        bot: {
+          botId: "discord-main",
+          platform: "discord",
+          runtime: "codex"
+        },
+        ChannelType: {
+          GuildText: "GuildText",
+          GuildCategory: "GuildCategory"
+        },
+        path: await import("node:path"),
+        discord: {
+          guilds: {
+            cache: new Map([["guild-1", guild]])
+          }
+        },
+        codex: {
+          async request() {
+            return { data: [] };
+          }
+        },
+        config: {
+          autoDiscoverProjects: false,
+          channels: {},
+          defaultModel: "gpt-5.3-codex"
+        },
+        state: {
+          snapshot() {
+            return {
+              threadBindings: {
+                [makeScopedRouteId("discord-main", "123")]: {
+                  repoChannelId: makeScopedRouteId("discord-main", "123"),
+                  codexThreadId: "thread-main",
+                  cwd: "/tmp/repo-main"
+                },
+                [makeScopedRouteId("discord-review", "123")]: {
+                  repoChannelId: makeScopedRouteId("discord-review", "123"),
+                  codexThreadId: "thread-review",
+                  cwd: "/tmp/repo-review"
+                }
+              }
+            };
+          },
+          clearBinding(repoChannelId: string) {
+            clearedBindings.push(repoChannelId);
+          },
+          async save() {}
+        },
+        projectsCategoryName: "codex-projects",
+        managedChannelTopicPrefix: "codex-cwd:",
+        managedThreadTopicPrefix: "codex-thread:",
+        isDiscordMissingPermissionsError: () => false,
+        getChannelSetups: () => ({
+          "123": { cwd: "/tmp/repo-main", model: "gpt-5.3-codex" }
+        }),
+        setChannelSetups: () => {}
+      });
+
+      const summary = await bootstrapService.bootstrapChannelMappings();
+
+      expect(summary.prunedBindings).toBe(1);
+      expect(clearedBindings).toEqual([makeScopedRouteId("discord-main", "123")]);
+    } finally {
       if (typeof originalGuildId === "string") {
         process.env.DISCORD_GUILD_ID = originalGuildId;
       } else {
