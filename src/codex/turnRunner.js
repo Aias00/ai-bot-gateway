@@ -1,6 +1,7 @@
 import path from "node:path";
 import { TURN_PHASE } from "../turns/lifecycle.js";
 import { resolveRuntimeForAgent } from "../agents/setupResolution.js";
+import { parseScopedRouteId } from "../bots/scopedRoutes.js";
 
 export function createTurnRunner(deps) {
   const {
@@ -23,7 +24,14 @@ export function createTurnRunner(deps) {
    * Get the agent client and runtime for a given setup and binding.
    * Priority: binding.runtime > agent runtime > global runtime
    */
-  function getClientForSetupWithRuntime(setup, existingBinding = null) {
+  function getClientForSetupWithRuntime(setup, existingBinding = null, bot = null) {
+    if (bot?.runtime === "claude" || bot?.runtime === "codex") {
+      return {
+        client: agentClientRegistry.getClient(bot.runtime),
+        runtime: bot.runtime
+      };
+    }
+
     // If we have an existing binding with runtime, use that
     if (existingBinding?.runtime) {
       return {
@@ -41,8 +49,8 @@ export function createTurnRunner(deps) {
     };
   }
 
-  function getClientForSetup(setup, existingBinding = null) {
-    return getClientForSetupWithRuntime(setup, existingBinding).client;
+  function getClientForSetup(setup, existingBinding = null, bot = null) {
+    return getClientForSetupWithRuntime(setup, existingBinding, bot).client;
   }
 
   function enqueuePrompt(repoChannelId, job) {
@@ -92,7 +100,7 @@ export function createTurnRunner(deps) {
           ? Math.max(1_000, Math.floor(configuredTurnMaxDurationMs))
           : null;
       try {
-        let threadId = await ensureThreadId(repoChannelId, job.setup);
+        let threadId = await ensureThreadId(repoChannelId, job.setup, job.bot);
         startedThreadId = threadId;
 
         const statusMessage = await safeReply(job.message, "⏳ Thinking...");
@@ -102,7 +110,7 @@ export function createTurnRunner(deps) {
 
         // Get the agent client for this setup
         const existingBinding = state.getBinding(repoChannelId);
-        const { client, runtime } = getClientForSetupWithRuntime(job.setup, existingBinding);
+        const { client, runtime } = getClientForSetupWithRuntime(job.setup, existingBinding, job.bot);
 
         const rawModel = job.setup.resolvedModel ?? job.setup.model ?? config.defaultModel;
         // For Claude runtime, don't pass model if it's the codex default (Claude CLI should use its own default)
@@ -187,7 +195,7 @@ export function createTurnRunner(deps) {
               state.clearBinding(repoChannelId);
               await state.save();
 
-              threadId = await ensureThreadId(repoChannelId, job.setup);
+              threadId = await ensureThreadId(repoChannelId, job.setup, job.bot);
               continue;
             }
 
@@ -208,7 +216,7 @@ export function createTurnRunner(deps) {
                   await turnPromise.catch(() => {});
                 }
                 await delay(Math.min(10_000, 1_000 * reconnectRetryCount));
-                threadId = await ensureThreadId(repoChannelId, job.setup);
+                threadId = await ensureThreadId(repoChannelId, job.setup, job.bot);
                 continue;
               }
               // Progress already observed: do not replay same prompt and risk duplicate output.
@@ -264,7 +272,7 @@ export function createTurnRunner(deps) {
     }
   }
 
-  async function ensureThreadId(repoChannelId, setup) {
+  async function ensureThreadId(repoChannelId, setup, bot = null) {
     const existingBinding = state.getBinding(repoChannelId);
     let existingThreadId = existingBinding?.codexThreadId ?? null;
     if (existingBinding?.cwd && path.resolve(existingBinding.cwd) !== path.resolve(setup.cwd)) {
@@ -286,7 +294,7 @@ export function createTurnRunner(deps) {
     const sandboxMode = setup.sandboxMode ?? config.sandboxMode;
 
     // Get the agent client for this setup
-    const client = getClientForSetup(setup, existingBinding);
+    const client = getClientForSetup(setup, existingBinding, bot);
 
     if (existingThreadId) {
       try {
@@ -314,7 +322,8 @@ export function createTurnRunner(deps) {
     const startParams = { cwd: setup.cwd };
     // Resolve runtime for model filtering
     const agentId = setup?.resolvedAgentId || setup?.agentId || null;
-    const runtimeForStart = resolveRuntimeForAgent(agentId, config);
+    const runtimeForStart =
+      bot?.runtime === "claude" || bot?.runtime === "codex" ? bot.runtime : resolveRuntimeForAgent(agentId, config);
     const rawModelForStart = setup.resolvedModel ?? setup.model ?? config.defaultModel;
     const isClaudeRuntimeForStart = runtimeForStart === "claude";
     const isCodexDefaultModelForStart = rawModelForStart === "gpt-5.3-codex" || rawModelForStart === "codex-default";
@@ -349,7 +358,8 @@ export function createTurnRunner(deps) {
         repoChannelId,
         cwd: setup.cwd,
         runtime: runtimeForBinding,
-        agentId: agentId || undefined
+        agentId: agentId || undefined,
+        ...buildBindingMetadata(repoChannelId, bot)
       });
       await state.save();
 
@@ -364,7 +374,8 @@ export function createTurnRunner(deps) {
       repoChannelId,
       cwd: setup.cwd,
       runtime: runtimeForBinding,
-      agentId: agentId || undefined
+      agentId: agentId || undefined,
+      ...buildBindingMetadata(repoChannelId, bot)
     });
     await state.save();
     return threadId;
@@ -507,6 +518,15 @@ function createActiveTurn(threadId, repoChannelId, message, cwd, options = {}) {
     createActiveTurn,
     abortActiveTurn,
     findActiveTurnByRepoChannel
+  };
+}
+
+function buildBindingMetadata(repoChannelId, bot = null) {
+  const scopedRoute = parseScopedRouteId(repoChannelId);
+  return {
+    ...(bot?.botId ? { botId: bot.botId } : scopedRoute?.botId ? { botId: scopedRoute.botId } : {}),
+    ...(bot?.platform ? { platform: bot.platform } : {}),
+    ...(scopedRoute?.externalRouteId ? { externalRouteId: scopedRoute.externalRouteId } : {})
   };
 }
 
