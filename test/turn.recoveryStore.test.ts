@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { createTurnRecoveryStore } from "../src/turns/recoveryStore.js";
+import { makeScopedRouteId } from "../src/bots/scopedRoutes.js";
 
 const tempDirs: string[] = [];
 
@@ -71,6 +72,37 @@ describe("turn recovery store", () => {
     expect(raw.turns["thread-1"]).toBeUndefined();
     expect(raw.requests["req-1"].status).toBe("done");
     expect(store.getRequestStatus("req-1")?.status).toBe("done");
+  });
+
+  test("persists bot and external route metadata for scoped request records", async () => {
+    const { store, recoveryPath } = await makeStore();
+    const scopedRouteId = makeScopedRouteId("discord-main", "channel-1");
+
+    await store.upsertTurnFromTracker({
+      threadId: "thread-scoped-1",
+      repoChannelId: scopedRouteId,
+      requestId: "req-scoped-1",
+      platform: "discord",
+      sourceMessageId: "msg-scoped-1",
+      channel: { id: "channel-1" },
+      statusMessageId: "status-scoped-1",
+      cwd: "/tmp/repo-scoped",
+      lifecyclePhase: "running",
+      seenDelta: false,
+      fullText: ""
+    });
+
+    const raw = JSON.parse(await fs.readFile(recoveryPath, "utf8"));
+    expect(raw.requests["req-scoped-1"]).toMatchObject({
+      requestId: "req-scoped-1",
+      platform: "discord",
+      repoChannelId: scopedRouteId,
+      channelId: "channel-1",
+      sourceMessageId: "msg-scoped-1",
+      botId: "discord-main",
+      externalRouteId: "channel-1",
+      status: "processing"
+    });
   });
 
   test("reconciles pending checkpoints by editing existing status messages", async () => {

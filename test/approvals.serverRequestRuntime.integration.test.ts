@@ -5,12 +5,14 @@ import {
   describeToolRequestUserInput
 } from "../src/codex/approvalPayloads.js";
 import { createServerRequestRuntime } from "../src/approvals/serverRequestRuntime.js";
+import { makeScopedRouteId } from "../src/bots/scopedRoutes.js";
 
 function createHarness(options: {
   isGeneralChannel?: () => boolean;
   channelIsTextBased?: boolean;
   stateChannelId?: string | null;
   channelPlatform?: string;
+  fetchChannelByRouteId?: ((routeId: string) => Promise<unknown>) | null;
   buildResponseForServerRequestOverride?: ((method: string, params: unknown, decision: string) => unknown) | null;
 } = {}) {
   const pendingApprovals = new Map<string, Record<string, unknown>>();
@@ -71,6 +73,7 @@ function createHarness(options: {
     pendingApprovals,
     approvalButtonPrefix: "approval:",
     isGeneralChannel: options.isGeneralChannel ?? (() => false),
+    fetchChannelByRouteId: options.fetchChannelByRouteId ?? null,
     extractThreadId: (params: Record<string, unknown>) => {
       if (typeof params?.threadId === "string") {
         return params.threadId;
@@ -155,6 +158,51 @@ describe("server request runtime integration", () => {
     expect(String(harness.approvalMessages[0]?.content ?? "")).toContain("Reply `!approve 0001`");
     expect(String(harness.approvalMessages[0]?.content ?? "")).not.toContain("Use buttons below");
     expect("components" in (harness.approvalMessages[0] ?? {})).toBe(false);
+  });
+
+  test("routes approval prompts through scoped route ids", async () => {
+    const routeCalls: string[] = [];
+    const scopedRouteId = makeScopedRouteId("feishu-support", "oc_1");
+    const harness = createHarness({
+      channelPlatform: "feishu",
+      stateChannelId: scopedRouteId,
+      fetchChannelByRouteId: async (routeId: string) => {
+        routeCalls.push(routeId);
+        return {
+          id: routeId,
+          platform: "feishu",
+          isTextBased: () => true,
+          async send(payload: Record<string, unknown>) {
+            harness.approvalMessages.push(payload);
+            return {
+              id: "approval-msg-1",
+              content: "Approval requested",
+              async edit() {
+                return this;
+              }
+            };
+          },
+          messages: {
+            async fetch() {
+              return null;
+            }
+          }
+        };
+      }
+    });
+
+    await harness.runtime.handleServerRequest({
+      id: "req-feishu-scoped-1",
+      method: "commandExecution/requestApproval",
+      params: {
+        threadId: "thread-1",
+        command: "git status",
+        cwd: "/tmp/repo"
+      }
+    });
+
+    expect(routeCalls).toEqual([scopedRouteId]);
+    expect(harness.approvalMessages).toHaveLength(1);
   });
 
   test("renders argv approvals as indexed args instead of flattening them into one fake shell command", async () => {

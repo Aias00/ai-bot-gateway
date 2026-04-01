@@ -1,5 +1,6 @@
 import http from "node:http";
 import { makeFeishuRouteId } from "../feishu/ids.js";
+import { makeScopedRouteId, parseScopedRouteId } from "../bots/scopedRoutes.js";
 
 const HTTP_LISTEN_RETRY_LIMIT = 3;
 const HTTP_LISTEN_RETRY_DELAY_MS = 50;
@@ -372,6 +373,7 @@ function extractRequestScope(request, requestUrl) {
   const getHeader = (key) => String(request.headers?.[key] ?? "").trim();
   const getQuery = (key) => String(requestUrl.searchParams.get(key) ?? "").trim();
 
+  const requestedBotId = getQuery("bot_id") || getHeader("x-bot-id");
   const explicitRouteId = getQuery("route_id") || getHeader("x-route-id");
   const requestedPlatform = normalizePlatform(getQuery("platform") || getHeader("x-platform"));
   const discordChannelId =
@@ -379,12 +381,24 @@ function extractRequestScope(request, requestUrl) {
   const feishuChatId =
     getQuery("feishu_chat_id") || getHeader("x-feishu-chat-id") || getQuery("chat_id") || getHeader("x-chat-id");
 
+  let externalRouteId = explicitRouteId;
   let routeId = explicitRouteId;
   if (!routeId && feishuChatId) {
+    externalRouteId = feishuChatId;
     routeId = makeFeishuRouteId(feishuChatId);
   }
   if (!routeId && discordChannelId) {
+    externalRouteId = discordChannelId;
     routeId = discordChannelId;
+  }
+
+  const scopedRoute = parseScopedRouteId(routeId);
+  const botId = requestedBotId || scopedRoute?.botId || null;
+  if (scopedRoute) {
+    externalRouteId = scopedRoute.externalRouteId;
+  }
+  if (botId && !scopedRoute && externalRouteId) {
+    routeId = makeScopedRouteId(botId, externalRouteId);
   }
 
   let platform = requestedPlatform;
@@ -393,7 +407,9 @@ function extractRequestScope(request, requestUrl) {
   }
 
   return {
+    botId,
     platform,
+    externalRouteId: externalRouteId || null,
     routeId: routeId || null
   };
 }
@@ -401,6 +417,10 @@ function extractRequestScope(request, requestUrl) {
 function validateStatusScope(status, scope) {
   const statusRouteId = String(status?.repoChannelId ?? status?.channelId ?? "").trim() || null;
   const statusPlatform = normalizePlatform(status?.platform);
+  const scopedStatusRoute = parseScopedRouteId(statusRouteId);
+  const statusBotId = String(status?.botId ?? scopedStatusRoute?.botId ?? "").trim() || null;
+  const statusExternalRouteId =
+    String(status?.externalRouteId ?? scopedStatusRoute?.externalRouteId ?? statusRouteId ?? "").trim() || null;
 
   if (!scope?.routeId) {
     return {
@@ -421,6 +441,21 @@ function validateStatusScope(status, scope) {
   }
 
   if (scope.routeId !== statusRouteId) {
+    if (
+      scope?.botId &&
+      statusBotId &&
+      scope.botId === statusBotId &&
+      scope.externalRouteId &&
+      statusExternalRouteId &&
+      scope.externalRouteId === statusExternalRouteId
+    ) {
+      return {
+        ok: true,
+        scopeVerified: true,
+        compatibilityMode: false,
+        reason: ""
+      };
+    }
     return {
       ok: false,
       scopeVerified: true,

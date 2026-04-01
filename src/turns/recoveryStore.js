@@ -1,5 +1,6 @@
 import { resolve, normalize } from "node:path";
 import { isMissingRolloutPathError } from "../app/runtimeUtils.js";
+import { parseScopedRouteId } from "../bots/scopedRoutes.js";
 
 const DEFAULT_REQUEST_TTL_MS = 3 * 24 * 60 * 60 * 1000;  // 3 days
 const DEFAULT_MAX_REQUESTS = 5000;
@@ -150,6 +151,7 @@ export function createTurnRecoveryStore(deps) {
     if (!tracker?.threadId || !tracker?.repoChannelId) {
       return;
     }
+    const routeMetadata = resolveRouteMetadata(tracker.repoChannelId);
 
     // P0: Resource exhaustion protection - auto-prune per-thread request history
     evictThreadRequestsIfNeeded(tracker.threadId);
@@ -157,10 +159,12 @@ export function createTurnRecoveryStore(deps) {
     store.turns[tracker.threadId] = {
       threadId: tracker.threadId,
       repoChannelId: tracker.repoChannelId,
+      botId: routeMetadata.botId,
+      externalRouteId: routeMetadata.externalRouteId,
       platform: tracker.platform ?? null,
       requestId: tracker.requestId ?? null,
       sourceMessageId: tracker.sourceMessageId ?? null,
-      channelId: tracker.channel?.id ?? tracker.repoChannelId,
+      channelId: tracker.channel?.id ?? routeMetadata.externalRouteId ?? tracker.repoChannelId,
       statusMessageId: tracker.statusMessageId ?? null,
       cwd: tracker.cwd ?? null,
       lifecyclePhase: tracker.lifecyclePhase ?? null,
@@ -174,7 +178,9 @@ export function createTurnRecoveryStore(deps) {
       requestId: tracker.requestId,
       threadId: tracker.threadId,
       repoChannelId: tracker.repoChannelId,
-      channelId: tracker.channel?.id ?? tracker.repoChannelId,
+      channelId: tracker.channel?.id ?? routeMetadata.externalRouteId ?? tracker.repoChannelId,
+      botId: routeMetadata.botId,
+      externalRouteId: routeMetadata.externalRouteId,
       sourceMessageId: tracker.sourceMessageId ?? null,
       status: "processing"
     });
@@ -193,6 +199,8 @@ export function createTurnRecoveryStore(deps) {
       threadId: snapshot.threadId,
       repoChannelId: snapshot.repoChannelId,
       channelId: snapshot.channelId,
+      botId: snapshot.botId ?? null,
+      externalRouteId: snapshot.externalRouteId ?? null,
       sourceMessageId: snapshot.sourceMessageId,
       status: requestStatus,
       errorMessage: options.errorMessage ?? null
@@ -287,7 +295,7 @@ export function createTurnRecoveryStore(deps) {
       let recoveryStatus = "recovery_unknown";
 
       try {
-        const channel = await fetchChannelByRouteId(turn.channelId).catch(() => null);
+        const channel = await fetchChannelByRouteId(turn.repoChannelId ?? turn.channelId).catch(() => null);
         if (!channel || !channel.isTextBased()) {
           skipped += 1;
           recoveryStatus = "recovery_skipped";
@@ -466,6 +474,8 @@ export function createTurnRecoveryStore(deps) {
       threadId: entry.threadId ?? existing.threadId ?? null,
       repoChannelId: entry.repoChannelId ?? existing.repoChannelId ?? null,
       channelId: entry.channelId ?? existing.channelId ?? null,
+      botId: entry.botId ?? existing.botId ?? null,
+      externalRouteId: entry.externalRouteId ?? existing.externalRouteId ?? null,
       sourceMessageId: entry.sourceMessageId ?? existing.sourceMessageId ?? null,
       status: nextStatus,
       errorMessage:
@@ -529,5 +539,19 @@ export function createTurnRecoveryStore(deps) {
     getRequestStatus,
     findRequestStatusBySource,
     reconcilePending
+  };
+}
+
+function resolveRouteMetadata(repoChannelId) {
+  const scopedRoute = parseScopedRouteId(repoChannelId);
+  if (!scopedRoute) {
+    return {
+      botId: null,
+      externalRouteId: String(repoChannelId ?? "").trim() || null
+    };
+  }
+  return {
+    botId: scopedRoute.botId,
+    externalRouteId: scopedRoute.externalRouteId
   };
 }
