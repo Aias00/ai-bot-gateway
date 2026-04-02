@@ -34,7 +34,7 @@ export async function runBridgeProcess(context) {
     turnRecoveryStore,
     createApprovalToken
   } = context;
-  const { generalChannelCwd } = runtimeEnv;
+  const { generalChannelCwd, repoRootPath, feishuGeneralCwd, feishuUnboundChatCwd } = runtimeEnv;
 
   runtimeContainer.setRef(
     "runtimeOps",
@@ -119,6 +119,9 @@ export async function runBridgeProcess(context) {
     agentClientRegistry,
     fs,
     generalChannelCwd,
+    repoRootPath,
+    feishuGeneralCwd,
+    feishuUnboundChatCwd,
     platformRegistry,
     maybeCompletePendingRestartNotice: runtimeAdapters.maybeCompletePendingRestartNotice,
     announceStartup: runtimeAdapters.announceStartup,

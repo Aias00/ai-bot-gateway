@@ -3,6 +3,9 @@ export async function startBridgeRuntime({
   agentClientRegistry,
   fs,
   generalChannelCwd,
+  repoRootPath,
+  feishuGeneralCwd,
+  feishuUnboundChatCwd,
   platformRegistry,
   maybeCompletePendingRestartNotice,
   announceStartup,
@@ -29,8 +32,14 @@ export async function startBridgeRuntime({
     await codex.start();
   }
 
-  await fs.mkdir(generalChannelCwd, { recursive: true }).catch((error) => {
-    console.warn(`failed to ensure general cwd at ${generalChannelCwd}: ${error.message}`);
+  await ensureRuntimeDirectories({
+    fs,
+    entries: [
+      { label: "general cwd", path: generalChannelCwd },
+      { label: "repo root", path: repoRootPath },
+      { label: "feishu general cwd", path: feishuGeneralCwd },
+      { label: "feishu unbound cwd", path: feishuUnboundChatCwd }
+    ]
   });
   const platformStartSummaries = (await platformRegistry?.start?.()) ?? [];
   const readiness = summarizePlatformReadiness(platformRegistry, platformStartSummaries);
@@ -164,4 +173,18 @@ export function summarizePlatformReadiness(platformRegistry, platformStartSummar
 function getPlatformSummaryKey(entry) {
   const instanceKey = String(entry?.instanceKey ?? entry?.botId ?? entry?.platformId ?? "").trim();
   return instanceKey || null;
+}
+
+async function ensureRuntimeDirectories({ fs, entries }) {
+  const seen = new Set();
+  for (const entry of entries) {
+    const targetPath = String(entry?.path ?? "").trim();
+    if (!targetPath || seen.has(targetPath)) {
+      continue;
+    }
+    seen.add(targetPath);
+    await fs.mkdir(targetPath, { recursive: true }).catch((error) => {
+      console.warn(`failed to ensure ${entry?.label ?? "runtime cwd"} at ${targetPath}: ${error.message}`);
+    });
+  }
 }
