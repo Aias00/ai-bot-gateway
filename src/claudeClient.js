@@ -41,7 +41,7 @@ function parseCliMajorVersion(versionOutput) {
  * Check if a CLI path points to a compatible (>= 2.x) Claude CLI.
  * @param {string} cliPath
  * @param {Record<string, string>} [env]
- * @returns {{ compatible: boolean; version: string; major: number | undefined; missingFlags?: string[] } | undefined}
+ * @returns {{ compatible: boolean; version: string; major: number | undefined; missingFlags?: string[]; supportsBare?: boolean } | undefined}
  */
 function checkCliCompatibility(cliPath, env) {
   let version;
@@ -79,8 +79,13 @@ function checkCliCompatibility(cliPath, env) {
     compatible: missing.length === 0,
     version,
     major,
-    missingFlags: missing.length > 0 ? missing : undefined
+    missingFlags: missing.length > 0 ? missing : undefined,
+    supportsBare: helpText.includes("--bare")
   };
+}
+
+export function buildClaudeSdkExtraArgs(capabilities = {}) {
+  return capabilities?.supportsBare ? { bare: null } : {};
 }
 
 /**
@@ -555,6 +560,7 @@ export class ClaudeClient extends EventEmitter {
   #pendingApprovals = new Map();
   #nextApprovalId = 1;
   #isResuming = false;  // Track if this is a resume session
+  #cliCapabilities = { supportsBare: false };
 
   constructor(options = {}) {
     super();
@@ -592,6 +598,9 @@ export class ClaudeClient extends EventEmitter {
     const compat = checkCliCompatibility(cliPath);
     if (compat) {
       this.#cliVersion = compat.version;
+      this.#cliCapabilities = {
+        supportsBare: compat.supportsBare === true
+      };
       if (!compat.compatible) {
         if (compat.major !== undefined && compat.major < MIN_CLI_MAJOR) {
           throw new Error(
@@ -777,7 +786,7 @@ export class ClaudeClient extends EventEmitter {
       includePartialMessages: true,
       env: subprocessEnv,
       // Use --bare to skip hooks, LSP, plugins which can cause non-zero exit codes
-      extraArgs: { bare: null },
+      extraArgs: buildClaudeSdkExtraArgs(this.#cliCapabilities),
       pathToClaudeCodeExecutable: this.#claudeBin,
       stderr: (data) => {
         const msg = typeof data === "string" ? data.trim() : String(data);

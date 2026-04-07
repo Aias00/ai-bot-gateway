@@ -28,7 +28,8 @@ export function normalizeCodexNotification(event) {
       kind: "turn_completed",
       method,
       threadId,
-      sessionId: params?.sessionId || null
+      sessionId: params?.sessionId || null,
+      ...(typeof params?.resultText === "string" ? { resultText: params.resultText } : {})
     };
   }
 

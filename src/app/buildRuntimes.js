@@ -140,6 +140,21 @@ export async function buildBridgeRuntimes(deps) {
           console.log(`[buildRuntimes] Updated binding for ${repoChannelId}: ${oldSessionId} -> ${newSessionId}`);
         }
       }
+    },
+    onInvalidModelSession: async (tracker, message) => {
+      const repoChannelId = String(tracker?.repoChannelId ?? "").trim();
+      if (!repoChannelId) {
+        return;
+      }
+      const binding = state.getBinding(repoChannelId);
+      if (!binding) {
+        return;
+      }
+      state.clearBinding(repoChannelId);
+      await state.save();
+      console.log(
+        `[buildRuntimes] Cleared binding for ${repoChannelId} after invalid Claude model session ${binding.codexThreadId ?? "(unknown)"}: ${String(message ?? "").slice(0, 120)}`
+      );
     }
   });
 

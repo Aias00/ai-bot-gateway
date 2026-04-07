@@ -1119,6 +1119,126 @@ describe("notification runtime ux flow cutover", () => {
     expect(chunkedMessages).toEqual(["Feishu final summary"]);
   });
 
+  test("clears stale Claude binding after invalid model result", async () => {
+    const activeTurns = new Map<string, TurnTracker>();
+    const tracker = createTracker({ platform: "feishu" }) as TurnTracker & { runtime?: string };
+    tracker.runtime = "claude";
+    activeTurns.set("thread-1", tracker);
+    const invalidModelCallbacks: string[] = [];
+
+    const runtime = createNotificationRuntime({
+      activeTurns,
+      renderVerbosity: "user",
+      TURN_PHASE: {
+        RUNNING: "running",
+        RECONNECTING: "reconnecting",
+        FINALIZING: "finalizing",
+        FAILED: "failed",
+        DONE: "done"
+      },
+      transitionTurnPhase: () => true,
+      normalizeCodexNotification: (notification: CodexNotification) => {
+        const { method, params } = notification;
+        if (method === "turn/completed") {
+          return { kind: "turn_completed", threadId: params.threadId, resultText: (params as { resultText?: string }).resultText };
+        }
+        return { kind: "unknown" };
+      },
+      extractAgentMessageText: () => "",
+      maybeSendAttachmentsForItem: async () => {},
+      maybeSendInferredAttachmentsFromText: async () => 0,
+      recordFileChanges: () => {},
+      summarizeItemForStatus: () => [],
+      extractWebSearchDetails: () => [],
+      buildFileDiffSection: () => "",
+      buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
+      sendChunkedToChannel: async () => {},
+      normalizeFinalSummaryText: (text: string) => text.trim(),
+      truncateStatusText: (text: string) => text,
+      isTransientReconnectErrorMessage: () => false,
+      safeSendToChannel: async () => null,
+      truncateForDiscordMessage: (text: string) => text,
+      discordMaxMessageLength: 1900,
+      debugLog: () => {},
+      writeHeartbeatFile: async () => {},
+      onTurnFinalized: async () => {},
+      onInvalidModelSession: async (_tracker: unknown, text: string) => {
+        invalidModelCallbacks.push(text);
+      },
+      turnCompletionQuietMs: 5,
+      turnCompletionMaxWaitMs: 100
+    });
+
+    await runtime.handleNotification({
+      method: "turn/completed",
+      params: {
+        threadId: "thread-1",
+        resultText: "There's an issue with the selected model (claude-sonnet-4-6). It may not exist or you may not have access to it. Run --model to pick a different model."
+      }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(invalidModelCallbacks).toHaveLength(1);
+    expect(invalidModelCallbacks[0]).toContain("selected model");
+  });
+
+  test("falls back to turn resultText for Feishu when no streamed summary exists", async () => {
+    const activeTurns = new Map<string, TurnTracker>();
+    const tracker = createTracker({ platform: "feishu" });
+    activeTurns.set("thread-1", tracker);
+    const chunkedMessages: string[] = [];
+
+    const runtime = createNotificationRuntime({
+      activeTurns,
+      renderVerbosity: "user",
+      TURN_PHASE: {
+        RUNNING: "running",
+        RECONNECTING: "reconnecting",
+        FINALIZING: "finalizing",
+        FAILED: "failed",
+        DONE: "done"
+      },
+      transitionTurnPhase: () => true,
+      normalizeCodexNotification: (notification: CodexNotification) => {
+        const { method, params } = notification;
+        if (method === "turn/completed") {
+          return { kind: "turn_completed", threadId: params.threadId, resultText: (params as { resultText?: string }).resultText };
+        }
+        return { kind: "unknown" };
+      },
+      extractAgentMessageText: () => "",
+      maybeSendAttachmentsForItem: async () => {},
+      maybeSendInferredAttachmentsFromText: async () => 0,
+      recordFileChanges: () => {},
+      summarizeItemForStatus: () => [],
+      extractWebSearchDetails: () => [],
+      buildFileDiffSection: () => "",
+      buildTurnRenderPlan: () => ({ primaryMessage: "", statusMessages: [], attachments: [] }),
+      sendChunkedToChannel: async (_channel: unknown, text: string) => {
+        chunkedMessages.push(text);
+      },
+      normalizeFinalSummaryText: (text: string) => text.trim(),
+      truncateStatusText: (text: string) => text,
+      isTransientReconnectErrorMessage: () => false,
+      safeSendToChannel: async () => null,
+      truncateForDiscordMessage: (text: string) => text,
+      discordMaxMessageLength: 1900,
+      debugLog: () => {},
+      writeHeartbeatFile: async () => {},
+      onTurnFinalized: async () => {},
+      turnCompletionQuietMs: 5,
+      turnCompletionMaxWaitMs: 100
+    });
+
+    await runtime.handleNotification({
+      method: "turn/completed",
+      params: { threadId: "thread-1", resultText: "Not logged in · Please run /login" }
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(chunkedMessages).toEqual(["Not logged in · Please run /login"]);
+  });
+
   test("stops thinking timer once tool work begins", async () => {
     const activeTurns = new Map<string, TurnTracker>();
     const tracker = createTracker();

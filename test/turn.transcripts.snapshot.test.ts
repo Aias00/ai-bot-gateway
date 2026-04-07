@@ -17,6 +17,19 @@ describe("turn transcript snapshots", () => {
     const expected = JSON.parse(fs.readFileSync(SNAPSHOT_PATH, "utf8"));
     expect(actual).toEqual(expected);
   });
+
+  test("preserves turn result text when present", () => {
+    expect(
+      normalizeCodexNotification({
+        method: "turn/completed",
+        params: { threadId: "thread-1", resultText: "Not logged in · Please run /login" }
+      })
+    ).toMatchObject({
+      kind: "turn_completed",
+      threadId: "thread-1",
+      resultText: "Not logged in · Please run /login"
+    });
+  });
 });
 
 function buildRepresentativeTranscripts() {

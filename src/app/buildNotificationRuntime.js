@@ -22,7 +22,8 @@ export function buildNotificationRuntime(deps) {
     disableStreamingOutput = false,
     feishuSegmentedStreaming = false,
     feishuStreamMinChars = 80,
-    onSessionIdUpdate = async () => {}
+    onSessionIdUpdate = async () => {},
+    onInvalidModelSession = async () => {}
   } = deps;
 
   return createNotificationRuntime({
@@ -58,6 +59,7 @@ export function buildNotificationRuntime(deps) {
         errorMessage: tracker?.failed ? tracker?.failureMessage ?? null : null
       });
     },
-    onSessionIdUpdate
+    onSessionIdUpdate,
+    onInvalidModelSession
   });
 }

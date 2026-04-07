@@ -33,9 +33,15 @@ export function createNotificationRuntime(deps) {
     turnCompletionQuietMs = 3000,
     turnCompletionMaxWaitMs = 12000,
     reconnectSettleQuietMs = 5000,
-    onSessionIdUpdate = async () => {}
+    onSessionIdUpdate = async () => {},
+    onInvalidModelSession = async () => {}
   } = deps;
   const discordStreamMinChars = Math.max(80, Math.min(240, Math.floor(discordMaxMessageLength / 16)));
+
+  function isInvalidClaudeModelSelectionMessage(text) {
+    const normalized = String(text ?? "").trim();
+    return /selected model/i.test(normalized) && /run --model/i.test(normalized);
+  }
 
   async function handleNotification({ method, params }) {
     const normalized = normalizeCodexNotification({ method, params });
@@ -329,7 +335,20 @@ export function createNotificationRuntime(deps) {
       await finalizeUxFlowStages(tracker);
       await maybeApplyStatusReaction(tracker, "done");
 
-      tracker.fullText = normalizeFinalSummaryText(tracker.fullText);
+      const finalSummarySource =
+        typeof tracker.fullText === "string" && tracker.fullText.trim().length > 0
+          ? tracker.fullText
+          : typeof tracker.resultText === "string"
+            ? tracker.resultText
+            : "";
+      tracker.fullText = normalizeFinalSummaryText(finalSummarySource);
+      if (tracker.runtime === "claude" && isInvalidClaudeModelSelectionMessage(tracker.fullText)) {
+        try {
+          await onInvalidModelSession(tracker, tracker.fullText);
+        } catch (invalidModelError) {
+          console.error(`onInvalidModelSession failed for ${threadId}: ${formatErrorMessage(invalidModelError)}`);
+        }
+      }
       const summaryTextForDiscord = sanitizeSummaryForDiscord(tracker.fullText);
       const diffBlock = renderVerbosity === "ops" ? buildFileDiffSection(tracker) : "";
       debugLog("summary", "prepared summary text", {

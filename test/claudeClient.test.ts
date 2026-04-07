@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { ClaudeClient } from "../src/claudeClient.js";
+import { ClaudeClient, buildClaudeSdkExtraArgs } from "../src/claudeClient.js";
 
 // Test basic client construction and method signatures
 describe("ClaudeClient", () => {
@@ -113,6 +113,16 @@ describe("ClaudeClient", () => {
       // Should use default when invalid
       const invalidClient = new ClaudeClient({ requestTimeoutMs: 100 });
       expect(invalidClient).toBeDefined();
+    });
+  });
+
+  describe("CLI capability adaptation", () => {
+    it("does not pass bare when CLI does not support it", () => {
+      expect(buildClaudeSdkExtraArgs({ supportsBare: false })).toEqual({});
+    });
+
+    it("passes bare only when CLI supports it", () => {
+      expect(buildClaudeSdkExtraArgs({ supportsBare: true })).toEqual({ bare: null });
     });
   });
 });
