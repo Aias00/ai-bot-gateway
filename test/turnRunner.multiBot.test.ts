@@ -29,6 +29,7 @@ function createHarness() {
   const stateByChannel = new Map<string, Record<string, unknown>>();
   const setBindingCalls: Array<{ repoChannelId: string; binding: Record<string, unknown> }> = [];
   const getClientCalls: string[] = [];
+  const requestCalls: Array<{ method: string; params: Record<string, unknown> | undefined }> = [];
 
   const state = {
     getBinding(repoChannelId: string) {
@@ -56,7 +57,8 @@ function createHarness() {
   });
 
   const client = {
-    async request(method: string) {
+    async request(method: string, params?: Record<string, unknown>) {
+      requestCalls.push({ method, params });
       if (method === "thread/start") {
         return { thread: { id: "thread-1" } };
       }
@@ -96,6 +98,7 @@ function createHarness() {
     state,
     setBindingCalls,
     getClientCalls,
+    requestCalls,
     safeReply,
     agentClientRegistry,
     finalizeTurn
@@ -103,6 +106,119 @@ function createHarness() {
 }
 
 describe("turnRunner multi-bot", () => {
+  test("maps bypass approval to never for codex runtime", async () => {
+    const harness = createHarness();
+    const runner = createTurnRunner({
+      queues: harness.queues,
+      activeTurns: harness.activeTurns,
+      state: harness.state,
+      agentClientRegistry: harness.agentClientRegistry,
+      config: {
+        runtime: "codex",
+        defaultModel: "gpt-5.3-codex",
+        defaultEffort: "medium",
+        approvalPolicy: "bypass",
+        sandboxMode: "workspace-write",
+        agents: {
+          "codex-default": {
+            model: "gpt-5.3-codex",
+            runtime: "codex",
+            enabled: true
+          }
+        }
+      },
+      safeReply: harness.safeReply,
+      buildSandboxPolicyForTurn: async () => null,
+      isThreadNotFoundError: () => false,
+      finalizeTurn: harness.finalizeTurn,
+      onTurnReconnectPending: () => {},
+      onActiveTurnsChanged: () => {}
+    });
+
+    runner.enqueuePrompt("bot:discord-main:route:123", {
+      message: { id: "message-1", channelId: "123" },
+      bot: {
+        botId: "discord-main",
+        platform: "discord",
+        runtime: "codex"
+      },
+      setup: {
+        cwd: "/tmp/repo-a",
+        agentId: "codex-default",
+        model: "gpt-5.3-codex"
+      },
+      inputItems: [{ type: "text", text: "hello" }]
+    });
+
+    const seenTracker = await waitUntil(() => harness.activeTurns.has("thread-1"));
+    expect(seenTracker).toBe(true);
+
+    const tracker = harness.activeTurns.get("thread-1");
+    tracker?.resolve("done");
+
+    const queueSettled = await waitUntil(() => !runner.getQueue("bot:discord-main:route:123").running);
+    expect(queueSettled).toBe(true);
+    expect(harness.requestCalls).toContainEqual({
+      method: "turn/start",
+      params: expect.objectContaining({ approvalPolicy: "never" })
+    });
+  });
+
+  test("preserves bypass approval for claude runtime", async () => {
+    const harness = createHarness();
+    const runner = createTurnRunner({
+      queues: harness.queues,
+      activeTurns: harness.activeTurns,
+      state: harness.state,
+      agentClientRegistry: harness.agentClientRegistry,
+      config: {
+        runtime: "codex",
+        defaultModel: "gpt-5.3-codex",
+        defaultEffort: "medium",
+        approvalPolicy: "bypass",
+        sandboxMode: "workspace-write",
+        agents: {
+          "claude-default": {
+            runtime: "claude",
+            enabled: true
+          }
+        }
+      },
+      safeReply: harness.safeReply,
+      buildSandboxPolicyForTurn: async () => null,
+      isThreadNotFoundError: () => false,
+      finalizeTurn: harness.finalizeTurn,
+      onTurnReconnectPending: () => {},
+      onActiveTurnsChanged: () => {}
+    });
+
+    runner.enqueuePrompt("bot:feishu-claude-main:route:123", {
+      message: { id: "message-1", channelId: "123" },
+      bot: {
+        botId: "feishu-claude-main",
+        platform: "feishu",
+        runtime: "claude"
+      },
+      setup: {
+        cwd: "/tmp/repo-a",
+        agentId: "claude-default"
+      },
+      inputItems: [{ type: "text", text: "hello" }]
+    });
+
+    const seenTracker = await waitUntil(() => harness.activeTurns.has("thread-1"));
+    expect(seenTracker).toBe(true);
+
+    const tracker = harness.activeTurns.get("thread-1");
+    tracker?.resolve("done");
+
+    const queueSettled = await waitUntil(() => !runner.getQueue("bot:feishu-claude-main:route:123").running);
+    expect(queueSettled).toBe(true);
+    expect(harness.requestCalls).toContainEqual({
+      method: "turn/start",
+      params: expect.objectContaining({ approvalPolicy: "bypass" })
+    });
+  });
   test("uses bot runtime instead of global runtime fallback", async () => {
     const harness = createHarness();
     const runner = createTurnRunner({

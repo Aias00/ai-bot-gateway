@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { ClaudeClient, buildClaudeSdkExtraArgs } from "../src/claudeClient.js";
+import { ClaudeClient, buildClaudeSdkExtraArgs, resolveClaudeTurnContext } from "../src/claudeClient.js";
 
 // Test basic client construction and method signatures
 describe("ClaudeClient", () => {
@@ -113,6 +113,26 @@ describe("ClaudeClient", () => {
       // Should use default when invalid
       const invalidClient = new ClaudeClient({ requestTimeoutMs: 100 });
       expect(invalidClient).toBeDefined();
+    });
+  });
+
+  describe("turn context resolution", () => {
+    it("treats UUID thread ids as resumable session ids", () => {
+      expect(resolveClaudeTurnContext({ threadId: "6c3802f3-a81f-49f5-93e4-2a1034a73a34", cwd: "/tmp" }, null)).toEqual({
+        threadId: "6c3802f3-a81f-49f5-93e4-2a1034a73a34",
+        cwd: "/tmp",
+        resumeSessionId: "6c3802f3-a81f-49f5-93e4-2a1034a73a34",
+        activeSessionId: "6c3802f3-a81f-49f5-93e4-2a1034a73a34"
+      });
+    });
+
+    it("does not reuse a fallback session for temp thread ids", () => {
+      expect(resolveClaudeTurnContext({ threadId: "temp-123", cwd: "/tmp" }, "b3e7e321-405d-497e-8287-121e12be2978")).toEqual({
+        threadId: "temp-123",
+        cwd: "/tmp",
+        resumeSessionId: null,
+        activeSessionId: null
+      });
     });
   });
 

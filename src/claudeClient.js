@@ -88,6 +88,18 @@ export function buildClaudeSdkExtraArgs(capabilities = {}) {
   return capabilities?.supportsBare ? { bare: null } : {};
 }
 
+export function resolveClaudeTurnContext(params = {}, fallbackSessionId = null) {
+  const requestedThreadId = typeof params.threadId === "string" ? params.threadId : "";
+  const requestedCwd = typeof params.cwd === "string" && params.cwd.trim().length > 0 ? params.cwd : null;
+  const resumeSessionId = isValidUuid(requestedThreadId) ? requestedThreadId : null;
+  return {
+    threadId: requestedThreadId || fallbackSessionId || null,
+    cwd: requestedCwd,
+    resumeSessionId,
+    activeSessionId: resumeSessionId
+  };
+}
+
 /**
  * Resolve all `claude` executables found in PATH.
  * @returns {string[]}
@@ -736,9 +748,10 @@ export class ClaudeClient extends EventEmitter {
   }
 
   async #turnStart(params, timeoutMs) {
-    const threadId = params.threadId || this.#sessionId;
+    const turnContext = resolveClaudeTurnContext(params, this.#sessionId);
+    const threadId = turnContext.threadId;
     const input = params.input || [];
-    const cwd = this.#currentCwd || process.cwd();
+    const cwd = turnContext.cwd || this.#currentCwd || process.cwd();
     const model = params.model;
     const approvalPolicy = params.approvalPolicy;
     const sandboxPolicy = params.sandboxPolicy;
@@ -758,8 +771,7 @@ export class ClaudeClient extends EventEmitter {
       await fs.access(cwd, fs.constants.F_OK);
     } catch (cwdError) {
       const error = new Error(`Working directory does not exist: ${cwd}`);
-      // Use sessionId if available (for resume), otherwise temp threadId
-      const errorThreadId = this.#sessionId || threadId;
+      const errorThreadId = turnContext.activeSessionId || threadId;
       this.emit("notification", {
         method: "error",
         params: {
@@ -770,14 +782,10 @@ export class ClaudeClient extends EventEmitter {
       throw error;
     }
 
-    console.log(`[claudeClient] Starting turn: cwd=${cwd}, model=${model || "default"}, permissionMode=${permissionMode}, isResuming=${this.#isResuming}, sessionId=${this.#sessionId || "none"}`);
+    const isResumingTurn = Boolean(turnContext.resumeSessionId);
+    console.log(`[claudeClient] Starting turn: cwd=${cwd}, model=${model || "default"}, permissionMode=${permissionMode}, isResuming=${isResumingTurn}, sessionId=${turnContext.resumeSessionId || "none"}`);
     const subprocessEnv = buildSubprocessEnv();
-    // Build query options
-    // Only pass resume if we're explicitly resuming a session AND have a valid session ID
-    const validResumeId = this.#isResuming && this.#sessionId && isValidUuid(this.#sessionId) ? this.#sessionId : undefined;
-    if (this.#isResuming && !validResumeId) {
-      console.log(`[claudeClient] Warning: resume requested but sessionId "${this.#sessionId}" is not a valid UUID, starting new session`);
-    }
+    const validResumeId = turnContext.resumeSessionId || undefined;
     const queryOptions = {
       cwd,
       resume: validResumeId,
@@ -796,8 +804,7 @@ export class ClaudeClient extends EventEmitter {
         this.emit("stderr", data);
       },
       canUseTool: async (toolName, toolInput, opts) => {
-        // Use sessionId if available (set after system_init), otherwise fall back to temp threadId
-        const effectiveThreadId = this.#sessionId || threadId;
+        const effectiveThreadId = turnContext.activeSessionId || threadId;
         return this.#handleCanUseTool(effectiveThreadId, toolName, toolInput, opts);
       }
     };
@@ -836,7 +843,7 @@ export class ClaudeClient extends EventEmitter {
         }
         messageCount++;
         console.log(`[claudeClient] Message ${messageCount}: type=${msg.type}, subtype=${msg.subtype || 'none'}`);
-        this.#handleMessage(msg, threadId);
+        this.#handleMessage(msg, threadId, turnContext);
         // Track successful completion
         if (msg.type === "result" && msg.subtype === "success") {
           receivedSuccessResult = true;
@@ -845,90 +852,72 @@ export class ClaudeClient extends EventEmitter {
       }
 
       console.log(`[claudeClient] Query completed, received ${messageCount} messages, success=${receivedSuccessResult}`);
-      return { completed: true };
+
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : 'N/A';
-      console.error(`[claudeClient] Query error after ${messageCount} messages, success=${receivedSuccessResult}: ${errorMessage}`);
-      console.error(`[claudeClient] Error stack: ${errorStack}`);
-
-      // If we received a successful result, ignore the exit code error
-      // This happens with some API proxies that don't properly signal shutdown to the CLI
-      if (receivedSuccessResult && errorMessage.includes("exited with code")) {
-        console.log(`[claudeClient] Ignoring exit code error after successful result`);
-        return { completed: true };
-      }
-
-      // Check if it was aborted
-      if (abortController.signal.aborted) {
-        const timeoutError = new Error(`Turn timed out after ${timeoutMs}ms`);
-        // Use sessionId if available, since tracker may have been updated from temp ID
-        const errorThreadId = this.#sessionId || threadId;
-        console.log(`[claudeClient] Emitting timeout error: threadId=${errorThreadId} (sessionId=${this.#sessionId}, originalThread=${threadId})`);
+      if (receivedSuccessResult && error?.message?.includes("exited with code 1")) {
+        console.warn(`[claudeClient] Ignoring exit code error after successful result`);
+      } else if (error.name === "AbortError") {
+        const errorThreadId = turnContext.activeSessionId || threadId;
+        console.log(`[claudeClient] Emitting timeout error: threadId=${errorThreadId} (sessionId=${turnContext.activeSessionId}, originalThread=${threadId})`);
         this.emit("notification", {
           method: "error",
           params: {
             threadId: errorThreadId,
-            error: { message: timeoutError.message }
+            error: { message: `Turn timed out after ${timeoutMs}ms` }
           }
         });
-        throw timeoutError;
+        throw new Error(`Turn timed out after ${timeoutMs}ms`);
+      } else {
+        console.error(`[claudeClient] Query error after ${messageCount} messages, success=${receivedSuccessResult}: ${error.message}`);
+        console.error(`[claudeClient] Error stack: ${error.stack}`);
+        const errorThreadId = turnContext.activeSessionId || threadId;
+        console.log(`[claudeClient] Emitting error notification: threadId=${errorThreadId} (sessionId=${turnContext.activeSessionId}, originalThread=${threadId})`);
+        this.emit("notification", {
+          method: "error",
+          params: {
+            threadId: errorThreadId,
+            error: { message: error.message }
+          }
+        });
+        throw error;
       }
-
-      // Emit error notification - use sessionId if available
-      const errorThreadId = this.#sessionId || threadId;
-      console.log(`[claudeClient] Emitting error notification: threadId=${errorThreadId} (sessionId=${this.#sessionId}, originalThread=${threadId})`);
-      this.emit("notification", {
-        method: "error",
-        params: {
-          threadId: errorThreadId,
-          error: { message: errorMessage }
-        }
-      });
-
-      throw error;
     } finally {
       clearTimeout(timeoutId);
     }
   }
-
   /**
    * @param {Object} msg - The SDK message
    * @param {string} threadId - The original thread ID (may be a temp ID for new sessions)
    */
-  #handleMessage(msg, threadId) {
+  #handleMessage(msg, threadId, turnContext = null) {
+    const currentTurnSessionId = turnContext?.activeSessionId || null;
     // Log all messages for debugging
-    console.log(`[claudeClient] Handling message: type=${msg.type}, subtype=${msg.subtype || 'none'}, session_id=${msg.session_id || 'none'}, threadId=${threadId}, currentSessionId=${this.#sessionId || 'none'}`);
+    console.log(`[claudeClient] Handling message: type=${msg.type}, subtype=${msg.subtype || 'none'}, session_id=${msg.session_id || 'none'}, threadId=${threadId}, currentSessionId=${currentTurnSessionId || this.#sessionId || 'none'}`);
 
     // Log full message for error types
     if (msg.type === "result" && msg.subtype !== "success") {
       console.log(`[claudeClient] Error result: ${JSON.stringify(msg, null, 2)}`);
     }
 
-    // For system_init message, use the ORIGINAL threadId (temp ID) so notificationRuntime
-    // can find the tracker and update it. Set sessionId AFTER processing this message.
     const isSystemInit = msg.type === "system" && msg.subtype === "init";
 
-    // ONLY set sessionId from system_init message - not from other messages
-    // This ensures we have the correct ID at the right time
     if (isSystemInit && msg.session_id) {
       console.log(`[claudeClient] Setting sessionId from system_init: ${msg.session_id}`);
+      if (turnContext) {
+        turnContext.activeSessionId = msg.session_id;
+      }
       this.#sessionId = msg.session_id;
     }
 
-    // Use the current session ID for notifications if available, EXCEPT for system_init
-    // which must use the original temp ID so the tracker can be found and updated
-    const effectiveThreadId = (isSystemInit || !this.#sessionId) ? threadId : this.#sessionId;
+    const activeSessionId = turnContext?.activeSessionId || null;
+    const effectiveThreadId = (isSystemInit || !activeSessionId) ? threadId : activeSessionId;
 
-    if (this.#sessionId && this.#sessionId !== threadId && !isSystemInit) {
-      console.log(`[claudeClient] Using sessionId=${this.#sessionId} instead of threadId=${threadId}`);
+    if (activeSessionId && activeSessionId !== threadId && !isSystemInit) {
+      console.log(`[claudeClient] Using sessionId=${activeSessionId} instead of threadId=${threadId}`);
     }
 
-    // Map message to notification, using the effective threadId
-    // This ensures activeTurns can find the tracker after it's updated by system_init
     const normalized = mapClaudeMessageToNotification(msg, effectiveThreadId);
     if (!normalized) {
-      // Log why we're skipping this message
       if (msg.type === "stream_event") {
         const event = msg.event;
         console.log(`[claudeClient] Skipping stream_event: type=${event?.type}, delta_type=${event?.delta?.type}`);
@@ -938,12 +927,10 @@ export class ClaudeClient extends EventEmitter {
 
     console.log(`[claudeClient] Normalized: kind=${normalized.kind}, threadId=${normalized.threadId}`);
 
-    // For system_init, include the real session_id for state updates
     if (normalized.kind === "system_init" && msg.session_id) {
       normalized.realSessionId = msg.session_id;
     }
 
-    // Handle different notification kinds
     switch (normalized.kind) {
       case "agent_delta":
         console.log(`[claudeClient] EMIT agent_delta: threadId=${normalized.threadId}, delta_len=${normalized.delta?.length}`);
@@ -994,7 +981,6 @@ export class ClaudeClient extends EventEmitter {
         break;
 
       case "system_init":
-        // Capture session info
         if (normalized.sessionId) {
           const prevSessionId = this.#sessionId;
           this.#sessionId = normalized.sessionId;
@@ -1029,7 +1015,6 @@ export class ClaudeClient extends EventEmitter {
         console.log(`[claudeClient] EMIT unknown kind=${normalized.kind}`);
     }
   }
-
   /**
    * Handle permission callback from Claude SDK.
    * Emits a serverRequest and waits for response.

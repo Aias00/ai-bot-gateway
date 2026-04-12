@@ -1838,6 +1838,111 @@ describe("feishu runtime", () => {
     expect(card?.elements?.[0]?.tag).toBe("markdown");
     expect(card?.elements?.[0]?.content).toContain("**系统**");
     expect(card?.elements?.[0]?.content).toContain("- CPU 正常");
+    expect(card?.elements?.[1]).toBeUndefined();
+  });
+
+  test("adds copy hints to long markdown cards and replies with plain text on follow-up text", async () => {
+    const sentBodies: Array<{ url: string; msgType?: string; content?: string }> = [];
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/tenant_access_token/internal")) {
+        return new Response(JSON.stringify({ code: 0, tenant_access_token: "tenant-token", expire: 7200 }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      if (url.includes("/open-apis/im/v1/messages?receive_id_type=chat_id") || url.includes("/reply")) {
+        const body = JSON.parse(String(init?.body ?? "{}"));
+        sentBodies.push({ url, msgType: body.msg_type, content: body.content });
+        return new Response(JSON.stringify({ code: 0, data: { message_id: `om_copy_text_${sentBodies.length}` } }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    };
+
+    const runtime = createFeishuRuntime({
+      config: {
+        defaultModel: "gpt-5.3-codex",
+        sandboxMode: "workspace-write",
+        allowedFeishuUserIds: []
+      },
+      runtimeEnv: {
+        feishuEnabled: true,
+        feishuAppId: "cli_test",
+        feishuAppSecret: "secret",
+        feishuVerificationToken: "",
+        feishuTransport: "long-connection",
+        feishuPort: 8788,
+        feishuHost: "127.0.0.1",
+        feishuWebhookPath: "/feishu/events",
+        feishuGeneralChatId: "",
+        feishuGeneralCwd: "/tmp/general",
+        feishuRequireMentionInGroup: false
+      },
+      getChannelSetups: () => ({
+        ["feishu:oc_outbound_markdown_copy_1"]: {
+          cwd: "/tmp/project",
+          model: "gpt-5.3-codex"
+        }
+      }),
+      runManagedRouteCommand: async () => {},
+      getHelpText: () => "help text",
+      isCommandSupportedForPlatform: () => false,
+      handleCommand: async () => {},
+      runtimeAdapters: {
+        buildTurnInputFromMessage: async () => [],
+        enqueuePrompt: () => {}
+      },
+      safeReply: async (message: { reply: (text: string) => Promise<unknown> }, content: string) => await message.reply(content)
+    });
+
+    const longMarkdown = [
+      "## 中文版（可直接发）",
+      "1. 这是第一段，说明这条总结可以直接转发。",
+      "2. 这是第二段，补充更多背景和使用场景。",
+      "3. 这是第三段，强调它适合分享给团队成员。",
+      "4. 这是第四段，继续把正文拉到长文本阈值以上。",
+      "5. 这是第五段，提示用户回复 !copy。",
+      "6. 这是第六段，确保行数也满足长文本条件。"
+    ].join("\n");
+
+    const channel = await runtime.fetchChannelByRouteId("feishu:oc_outbound_markdown_copy_1");
+    expect(channel).toBeTruthy();
+    await channel.send(longMarkdown);
+
+    expect(sentBodies).toHaveLength(1);
+    expect(sentBodies[0]?.msgType).toBe("interactive");
+    const card = JSON.parse(String(sentBodies[0]?.content ?? "{}"));
+    expect(card?.elements?.[1]?.tag).toBe("markdown");
+    expect(card?.elements?.[1]?.content).toContain("回复 `!copy` 获取纯文本版");
+
+    await runtime.handleEventPayload({
+      header: {
+        event_id: "evt-copy-followup-1",
+        event_type: "im.message.receive_v1"
+      },
+      event: {
+        sender: {
+          sender_id: { open_id: "ou_copy_followup_1" },
+          sender_type: "user"
+        },
+        message: {
+          message_id: "om_copy_followup_1",
+          chat_id: "oc_outbound_markdown_copy_1",
+          chat_type: "p2p",
+          message_type: "text",
+          content: JSON.stringify({ text: "!copy" }),
+          mentions: []
+        }
+      }
+    });
+
+    expect(sentBodies).toHaveLength(2);
+    expect(sentBodies[1]?.url).toContain("/open-apis/im/v1/messages/om_copy_followup_1/reply");
+    expect(sentBodies[1]?.msgType).toBe("text");
+    expect(JSON.parse(String(sentBodies[1]?.content ?? "{}"))?.text).toBe(longMarkdown);
   });
 
   test("renders markdown replies with payload.content as Feishu interactive cards", async () => {

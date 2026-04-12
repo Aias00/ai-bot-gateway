@@ -47,6 +47,7 @@ export function createFeishuRuntime(deps) {
   const seenEventIds = new Map();
   const sentMessages = new Map();
   const recentOutgoingTextByChat = new Map();
+  const recentCopyableTextByChat = new Map();
   const inboundMessageChainsByRoute = new Map();
   const inboundMediaByMessageId = new Map();
   const inboundMediaByRouteAndSender = new Map();
@@ -61,6 +62,7 @@ export function createFeishuRuntime(deps) {
       : 24 * 60 * 60 * 1000;
   const recentImageWindowMs =
     Number.isFinite(feishuRecentImageWindowMs) && feishuRecentImageWindowMs > 0 ? feishuRecentImageWindowMs : 3 * 60 * 1000;
+  const copyableTextTtlMs = 6 * 60 * 60 * 1000;
   const transport = normalizeFeishuTransport(feishuTransport);
   const proxyUrl = getProxyUrl();
   const proxyAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : null;
@@ -395,6 +397,21 @@ export function createFeishuRuntime(deps) {
           "Tip: send `/where` in this chat to inspect identifiers again."
         ].join("\n")
       );
+      return;
+    }
+
+    if (normalizedCommand === "!copy") {
+      const copyableText = resolveCopyableText(message.chat_id);
+      if (!copyableText) {
+        await safeReply(inboundMessage, "最近没有可复制的长文本，请先让机器人再发送一次。");
+        return;
+      }
+      await sendTextMessage({
+        chatId: message.chat_id,
+        text: copyableText,
+        replyToMessageId: inboundMessage.id,
+        forcePlainText: true
+      });
       return;
     }
 
@@ -792,12 +809,12 @@ export function createFeishuRuntime(deps) {
     };
   }
 
-  async function sendTextMessage({ chatId, text, replyToMessageId }) {
+  async function sendTextMessage({ chatId, text, replyToMessageId, forcePlainText = false }) {
     const normalizedText = stripAnsi(String(text ?? "")).trim();
     if (!normalizedText) {
       return null;
     }
-    const outgoing = buildOutgoingTextEnvelope(normalizedText);
+    const outgoing = buildOutgoingTextEnvelope(normalizedText, { forcePlainText });
     const sent = await sendStructuredMessage({
       chatId,
       msgType: outgoing.msgType,
@@ -805,6 +822,9 @@ export function createFeishuRuntime(deps) {
       replyToMessageId,
       displayText: outgoing.displayText
     });
+    if (sent && outgoing.copyableText) {
+      rememberCopyableText(chatId, outgoing.copyableText);
+    }
     rememberOutgoingText(chatId, outgoing.displayText);
     return sent;
   }
@@ -1245,6 +1265,37 @@ export function createFeishuRuntime(deps) {
     });
   }
 
+  function pruneCopyableText(now = Date.now()) {
+    for (const [key, entry] of recentCopyableTextByChat.entries()) {
+      if (!entry || now - entry.at > copyableTextTtlMs) {
+        recentCopyableTextByChat.delete(key);
+      }
+    }
+  }
+
+  function rememberCopyableText(chatId, text) {
+    const normalizedChatId = String(chatId ?? "").trim();
+    const normalizedText = String(text ?? "").trim();
+    if (!normalizedChatId || !normalizedText) {
+      return;
+    }
+    pruneCopyableText();
+    recentCopyableTextByChat.set(normalizedChatId, {
+      text: normalizedText,
+      at: Date.now()
+    });
+  }
+
+  function resolveCopyableText(chatId) {
+    const normalizedChatId = String(chatId ?? "").trim();
+    if (!normalizedChatId) {
+      return "";
+    }
+    pruneCopyableText();
+    const entry = recentCopyableTextByChat.get(normalizedChatId);
+    return typeof entry?.text === "string" ? entry.text : "";
+  }
+
   function resolveQuickReplySelectionText(chatId, text) {
     const normalizedText = String(text ?? "").trim();
     if (!/^\d{1,2}$/.test(normalizedText)) {
@@ -1385,7 +1436,7 @@ export function createFeishuRuntime(deps) {
     }
   }
 
-  function buildOutgoingTextEnvelope(text) {
+  function buildOutgoingTextEnvelope(text, options = {}) {
     const normalizedText = String(text ?? "").trim();
     if (!normalizedText) {
       return {
@@ -1394,11 +1445,13 @@ export function createFeishuRuntime(deps) {
         displayText: ""
       };
     }
-    if (shouldRenderMarkdownAsInteractiveCard(normalizedText)) {
+    if (!options.forcePlainText && shouldRenderMarkdownAsInteractiveCard(normalizedText)) {
+      const copyableText = shouldOfferCopyTextFallback(normalizedText) ? normalizedText : "";
       return {
         msgType: "interactive",
-        content: buildMarkdownInteractiveCard(normalizedText),
-        displayText: normalizedText
+        content: buildMarkdownInteractiveCard(normalizedText, { showCopyHint: Boolean(copyableText) }),
+        displayText: normalizedText,
+        copyableText
       };
     }
     return {
@@ -1563,9 +1616,21 @@ function shouldRenderMarkdownAsInteractiveCard(text) {
   );
 }
 
-function buildMarkdownInteractiveCard(text) {
+function buildMarkdownInteractiveCard(text, options = {}) {
   const headerTitle = buildInteractiveCardTitle(text);
   const sanitizedContent = sanitizeMarkdownForFeishuCard(text);
+  const elements = [
+    {
+      tag: "markdown",
+      content: sanitizedContent
+    }
+  ];
+  if (options.showCopyHint === true) {
+    elements.push({
+      tag: "markdown",
+      content: "> 回复 `!copy` 获取纯文本版"
+    });
+  }
   return {
     config: {
       wide_screen_mode: true
@@ -1577,13 +1642,20 @@ function buildMarkdownInteractiveCard(text) {
         content: headerTitle
       }
     },
-    elements: [
-      {
-        tag: "markdown",
-        content: sanitizedContent
-      }
-    ]
+    elements
   };
+}
+
+function shouldOfferCopyTextFallback(text) {
+  const normalized = String(text ?? "").trim();
+  if (!normalized) {
+    return false;
+  }
+  const nonEmptyLines = normalized
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return normalized.length >= 180 || nonEmptyLines.length >= 6;
 }
 
 function buildInteractiveCardTitle(text) {
@@ -1947,6 +2019,7 @@ const FEISHU_TEXT_COMMANDS = new Set([
   "approve",
   "decline",
   "cancel",
+  "copy",
   "resync",
   "rebuild",
   "initrepo",

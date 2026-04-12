@@ -49,9 +49,6 @@ export function createTurnRunner(deps) {
     };
   }
 
-  function getClientForSetup(setup, existingBinding = null, bot = null) {
-    return getClientForSetupWithRuntime(setup, existingBinding, bot).client;
-  }
 
   function enqueuePrompt(repoChannelId, job) {
     const queue = getQueue(repoChannelId);
@@ -118,7 +115,7 @@ export function createTurnRunner(deps) {
         const isCodexDefaultModel = rawModel === "gpt-5.3-codex" || rawModel === "codex-default";
         const model = isClaudeRuntime && isCodexDefaultModel ? null : rawModel;
         const effort = config.defaultEffort;
-        const approvalPolicy = config.approvalPolicy;
+        const approvalPolicy = normalizeApprovalPolicyForRuntime(config.approvalPolicy, runtime);
         const sandboxMode = job.setup.sandboxMode ?? config.sandboxMode;
         const sandboxPolicy = await buildSandboxPolicyForTurn(sandboxMode, job.setup.cwd);
 
@@ -135,6 +132,7 @@ export function createTurnRunner(deps) {
 
           const turnParams = {
             threadId: targetThreadId,
+            cwd: job.setup.cwd,
             input: job.inputItems
           };
           if (model) {
@@ -290,11 +288,11 @@ export function createTurnRunner(deps) {
       existingThreadId = null;
     }
 
-    const approvalPolicy = config.approvalPolicy;
     const sandboxMode = setup.sandboxMode ?? config.sandboxMode;
 
     // Get the agent client for this setup
-    const client = getClientForSetup(setup, existingBinding, bot);
+    const { client, runtime: runtimeForApproval } = getClientForSetupWithRuntime(setup, existingBinding, bot);
+    const approvalPolicy = normalizeApprovalPolicyForRuntime(config.approvalPolicy, runtimeForApproval);
 
     if (existingThreadId) {
       try {
@@ -540,6 +538,13 @@ function runDetachedCallback(label, callback) {
 
 function formatErrorMessage(error) {
   return error instanceof Error ? error.message : String(error ?? "unknown");
+}
+
+function normalizeApprovalPolicyForRuntime(approvalPolicy, runtime) {
+  if ((approvalPolicy === "bypass" || approvalPolicy === "skip-all") && runtime === "codex") {
+    return "never";
+  }
+  return approvalPolicy;
 }
 
 function isTransientReconnectError(message) {
